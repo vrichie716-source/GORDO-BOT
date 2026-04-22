@@ -20,7 +20,7 @@ import random
 import re
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import requests
 
@@ -108,14 +108,19 @@ async def refresh_admin_cache(bot, chat_id: int):
 async def is_admin(bot, chat_id: int, user_id: int, username: str | None = None) -> bool:
     """Check if a user is an admin in the given chat (uses cache).
     Also returns True for superadmin usernames/IDs."""
-    if username and username.lower() in SUPERADMIN_USERNAMES:
-        _superadmin_ids.add(user_id)
-        return True
-    if user_id in _superadmin_ids:
+    if is_superadmin(user_id, username):
         return True
     if chat_id not in _admin_cache:
         await refresh_admin_cache(bot, chat_id)
     return user_id in _admin_cache.get(chat_id, {})
+
+
+def is_superadmin(user_id: int, username: str | None = None) -> bool:
+    """Check if a user is a superadmin."""
+    if username and username.lower() in SUPERADMIN_USERNAMES:
+        _superadmin_ids.add(user_id)
+        return True
+    return user_id in _superadmin_ids
 
 
 async def _track_superadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -140,6 +145,7 @@ FLOOD_FILE = os.path.join(_DATA_DIR, "flood.json")
 MODLOG_FILE = os.path.join(_DATA_DIR, "modlog.json")
 SCORES_FILE = os.path.join(_DATA_DIR, "scores.json")
 RULES_FILE = os.path.join(_DATA_DIR, "rules.json")
+WARN_FILE  = os.path.join(_DATA_DIR, "warnings.json")   # legacy — migrated into scores.json
 
 # Offender scoring escalation thresholds
 _SCORE_WARN_THRESHOLD = 3
@@ -1861,16 +1867,6 @@ async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 return  # stop checking other words once matched
 
-                if reason:
-                    try:
-                        notice = await context.bot.send_message(chat.id, reason)
-                        # Auto-delete notice after 10s
-                        await asyncio.sleep(10)
-                        await notice.delete()
-                    except TelegramError:
-                        pass
-                return  # stop processing
-
     # ── Flood check ──
     fl = _get_flood(chat.id)
     limit = fl.get("limit", 0)
@@ -2348,7 +2344,7 @@ async def warn_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.reply_text(f"⚠️ Reached ban threshold but failed to ban: {e}")
     elif score >= _SCORE_MUTE_THRESHOLD:
         try:
-            until = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
+            until = datetime.now(timezone.utc) + timedelta(hours=1)
             await context.bot.restrict_chat_member(
                 chat.id, target_id, permissions=ChatPermissions(can_send_messages=False), until_date=until
             )
@@ -2381,7 +2377,7 @@ async def infractions_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     lines = [f"📊 <b>Infractions for <code>{target_id}</code></b> (Score: <b>{score}</b>)\n"]
     for i, inf in enumerate(history[-10:], 1):  # show last 10
-        dt_str = datetime.datetime.fromtimestamp(inf['time'], datetime.timezone.utc).strftime('%Y-%m-%d')
+        dt_str = datetime.fromtimestamp(inf['time'], timezone.utc).strftime('%Y-%m-%d')
         lines.append(f"{i}. <b>{inf['action']}</b> ({dt_str}) by <code>{inf['actor']}</code>\n   Reason: {inf['reason']}")
         
     if len(history) > 10:
@@ -2484,7 +2480,7 @@ async def backup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Exports blocklist, fed bans, and approved list for the current group."""
     chat = update.effective_chat
     user = update.effective_user
-    if str(user.id) not in SUPERADMIN_USERNAMES:
+    if not is_superadmin(user.id, user.username):
         await update.message.reply_text("⛔ Superadmins only.")
         return
     if chat.type not in ("group", "supergroup"):
@@ -2504,7 +2500,7 @@ async def backup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     export_data = {
         "chat_id": chat.id,
         "chat_title": chat.title,
-        "exported_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "exported_at": datetime.now(timezone.utc).isoformat(),
         "blocklist": bl,
         "antiraid": antraid,
         "flood": flood,
@@ -2521,7 +2517,7 @@ async def restore_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Imports backup JSON data."""
     chat = update.effective_chat
     user = update.effective_user
-    if str(user.id) not in SUPERADMIN_USERNAMES:
+    if not is_superadmin(user.id, user.username):
         await update.message.reply_text("⛔ Superadmins only.")
         return
     if chat.type not in ("group", "supergroup"):
