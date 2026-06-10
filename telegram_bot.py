@@ -534,8 +534,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     kb = [
         [
-            InlineKeyboardButton("🇺🇸  English", callback_data="lang_en"),
-            InlineKeyboardButton("🇲🇽  Español", callback_data="lang_es"),
+            InlineKeyboardButton("🇺🇸  English", callback_data="lang_en", style="primary"),
+            InlineKeyboardButton("🇲🇽  Español", callback_data="lang_es", style="primary"),
         ]
     ]
     msg = await update.message.reply_text(
@@ -570,7 +570,7 @@ async def handle_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
     t = TEXTS[lang]
     # Escape special chars in question for MarkdownV2
     q_escaped = question.replace("+", "\\+").replace("-", "\\-")
-    kb = [[InlineKeyboardButton(str(c), callback_data=f"math_{c}") for c in choices]]
+    kb = [[InlineKeyboardButton(str(c), callback_data=f"math_{c}", style="primary") for c in choices]]
 
     chat_id = query.message.chat_id
     await delete_tracked(context, chat_id)
@@ -624,7 +624,7 @@ async def handle_math(update: Update, context: ContextTypes.DEFAULT_TYPE):
             invite_links.append((gid, link_obj.invite_link))
             name = GROUP_NAMES.get(lang, {}).get(gid) or GROUP_NAMES["en"].get(gid, str(gid))
             btn_label = f"{TEXTS[lang]['welcome_btn']} → {name}"
-            link_buttons.append([InlineKeyboardButton(btn_label, url=link_obj.invite_link)])
+            link_buttons.append([InlineKeyboardButton(btn_label, url=link_obj.invite_link, style="success")])
         except Exception as e:
             logger.warning(f"Could not create invite for {gid}: {e}")
 
@@ -1940,7 +1940,7 @@ async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = f"🔨 User <code>{target_id}</code> banned."
         if reason:
             text += f"\nReason: {reason}"
-        kb = [[InlineKeyboardButton("🔓 Unban", callback_data=f"unban_{target_id}")]]
+        kb = [[InlineKeyboardButton("🔓 Unban", callback_data=f"unban_{target_id}", style="success")]]
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
         
         await _log_mod_action(context.bot, chat.id, update.effective_user, "Ban", target_id, reason)
@@ -2080,7 +2080,7 @@ async def mute_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = f"🔇 User <code>{target_id}</code> muted."
         if reason:
             text += f"\nReason: {reason}"
-        kb = [[InlineKeyboardButton("🔊 Unmute", callback_data=f"unmute_{target_id}")]]
+        kb = [[InlineKeyboardButton("🔊 Unmute", callback_data=f"unmute_{target_id}", style="success")]]
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
         
         await _log_mod_action(context.bot, chat.id, update.effective_user, "Mute", target_id, reason)
@@ -2624,23 +2624,31 @@ def _build_settings_text_and_kb(chat_id: int) -> tuple[str, InlineKeyboardMarkup
             InlineKeyboardButton(
                 f"{icon(antiraid_on)} Anti-Raid",
                 callback_data=f"aset_{chat_id}_antiraid",
+
+                style="primary"
             ),
             InlineKeyboardButton(
                 f"{icon(auto_ar_on)} Auto Anti-Raid",
                 callback_data=f"aset_{chat_id}_autoar",
+
+                style="primary"
             ),
         ],
         [
             InlineKeyboardButton(
                 f"{icon(flood_on)} Flood Control",
                 callback_data=f"aset_{chat_id}_flood",
+
+                style="primary"
             ),
             InlineKeyboardButton(
                 f"{icon(blocklist_on)} Blocklist",
                 callback_data=f"aset_{chat_id}_blocklist",
+
+                style="primary"
             ),
         ],
-        [InlineKeyboardButton("🔄 Refresh", callback_data=f"aset_{chat_id}_refresh")],
+        [InlineKeyboardButton("🔄 Refresh", callback_data=f"aset_{chat_id}_refresh", style="primary")],
     ])
     return text, kb
 
@@ -2822,7 +2830,7 @@ def _apply_custommsg_formatting(text: str, plain_text: str = "") -> tuple[str, l
         for m in _BTN_PLAIN.finditer(plain_text):
             label, url = m.group(1).strip(), m.group(2).strip()
             if url:  # only add if we got a real URL
-                inline_buttons.append(InlineKeyboardButton(label, url=url))
+                inline_buttons.append(InlineKeyboardButton(label, url=url, style="success"))
         # Strip button syntax from the HTML body.
         # Use a permissive match (.*?) so that HTML tags such as <a href="...">
         # embedded inside the button block by PTB's text_html don't break the match.
@@ -2833,7 +2841,7 @@ def _apply_custommsg_formatting(text: str, plain_text: str = "") -> tuple[str, l
     else:
         # Fallback: parse directly from the HTML body
         def _extract_button(m):
-            inline_buttons.append(InlineKeyboardButton(m.group(1).strip(), url=m.group(2).strip()))
+            inline_buttons.append(InlineKeyboardButton(m.group(1).strip(), url=m.group(2).strip(), style="success"))
             return ''
         text = _BTN_ESCAPED.sub(_extract_button, text)
         text = _BTN_PLAIN.sub(_extract_button, text)
@@ -3086,8 +3094,8 @@ async def _adminedit_process_url(update, context, url: str):
     context.user_data["adminedit_msg_id"] = msg_id
 
     kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Yes, edit this message", callback_data="aedit_yes"),
-        InlineKeyboardButton("❌ No, cancel",            callback_data="aedit_no"),
+        InlineKeyboardButton("✅ Yes, edit this message", callback_data="aedit_yes", style="success"),
+        InlineKeyboardButton("❌ No, cancel",            callback_data="aedit_no", style="danger"),
     ]])
     await update.message.reply_text(
         "🔎 <b>Is this the message you want me to edit?</b>\n\n"
@@ -3742,13 +3750,13 @@ def _gordo_main_kb(page: int = 0):
     total_pages = (len(_GORDO_CATEGORIES) + _GORDO_PAGE_SIZE - 1) // _GORDO_PAGE_SIZE
     rows = []
     for key, emoji, label in cats:
-        rows.append([InlineKeyboardButton(f"{emoji}  {label}", callback_data=f"gordo_cat_{key}")])
+        rows.append([InlineKeyboardButton(f"{emoji}  {label}", callback_data=f"gordo_cat_{key}", style="primary")])
     # Pagination row
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton(f"◀️  Page {page}", callback_data=f"gordo_page_{page - 1}"))
+        nav.append(InlineKeyboardButton(f"◀️  Page {page}", callback_data=f"gordo_page_{page - 1}", style="primary"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton(f"Page {page + 2}  ▶️", callback_data=f"gordo_page_{page + 1}"))
+        nav.append(InlineKeyboardButton(f"Page {page + 2}  ▶️", callback_data=f"gordo_page_{page + 1}", style="primary"))
     if nav:
         rows.append(nav)
     return InlineKeyboardMarkup(rows)
@@ -3758,11 +3766,11 @@ def _GORDO_TOOLS_kb(cat_key: str):
     tools = GORDO_TOOLS.get(cat_key, [])
     rows = []
     for name, url in tools:
-        rows.append([InlineKeyboardButton(f"{name} 🔗", url=url)])
+        rows.append([InlineKeyboardButton(f"{name} 🔗", url=url, style="success")])
     # Determine which page this category is on for the back button
     idx = next((i for i, (k, _, _) in enumerate(_GORDO_CATEGORIES) if k == cat_key), 0)
     page = idx // _GORDO_PAGE_SIZE
-    rows.append([InlineKeyboardButton("◀️ Back", callback_data=f"gordo_page_{page}")])
+    rows.append([InlineKeyboardButton("◀️ Back", callback_data=f"gordo_page_{page}", style="primary")])
     return InlineKeyboardMarkup(rows)
 
 async def gordo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4308,12 +4316,12 @@ def _ai_main_kb(page: int = 0):
     total_pages = (len(_AI_CATEGORIES) + _AI_PAGE_SIZE - 1) // _AI_PAGE_SIZE
     rows = []
     for key, emoji, label in cats:
-        rows.append([InlineKeyboardButton(f"{emoji}  {label}", callback_data=f"ai_cat_{key}")])
+        rows.append([InlineKeyboardButton(f"{emoji}  {label}", callback_data=f"ai_cat_{key}", style="primary")])
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton(f"◀️  Page {page}", callback_data=f"ai_page_{page - 1}"))
+        nav.append(InlineKeyboardButton(f"◀️  Page {page}", callback_data=f"ai_page_{page - 1}", style="primary"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton(f"Page {page + 2}  ▶️", callback_data=f"ai_page_{page + 1}"))
+        nav.append(InlineKeyboardButton(f"Page {page + 2}  ▶️", callback_data=f"ai_page_{page + 1}", style="primary"))
     if nav:
         rows.append(nav)
     return InlineKeyboardMarkup(rows)
@@ -4323,10 +4331,10 @@ def _AI_TOOLS_kb(cat_key: str):
     tools = AI_TOOLS.get(cat_key, [])
     rows = []
     for name, url in tools:
-        rows.append([InlineKeyboardButton(f"{name} 🔗", url=url)])
+        rows.append([InlineKeyboardButton(f"{name} 🔗", url=url, style="success")])
     idx = next((i for i, (k, _, _) in enumerate(_AI_CATEGORIES) if k == cat_key), 0)
     page = idx // _AI_PAGE_SIZE
-    rows.append([InlineKeyboardButton("◀️ Back", callback_data=f"ai_page_{page}")])
+    rows.append([InlineKeyboardButton("◀️ Back", callback_data=f"ai_page_{page}", style="primary")])
     return InlineKeyboardMarkup(rows)
 
 async def ai_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4620,12 +4628,12 @@ def _dl_main_kb(page: int = 0):
     total_pages = (len(_DL_CATEGORIES) + _DL_PAGE_SIZE - 1) // _DL_PAGE_SIZE
     rows = []
     for key, emoji, label in cats:
-        rows.append([InlineKeyboardButton(f"{emoji}  {label}", callback_data=f"dl_cat_{key}")])
+        rows.append([InlineKeyboardButton(f"{emoji}  {label}", callback_data=f"dl_cat_{key}", style="primary")])
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton(f"◀️  Page {page}", callback_data=f"dl_page_{page - 1}"))
+        nav.append(InlineKeyboardButton(f"◀️  Page {page}", callback_data=f"dl_page_{page - 1}", style="primary"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton(f"Page {page + 2}  ▶️", callback_data=f"dl_page_{page + 1}"))
+        nav.append(InlineKeyboardButton(f"Page {page + 2}  ▶️", callback_data=f"dl_page_{page + 1}", style="primary"))
     if nav:
         rows.append(nav)
     return InlineKeyboardMarkup(rows)
@@ -4635,10 +4643,10 @@ def _DL_TOOLS_kb(cat_key: str):
     tools = DL_TOOLS.get(cat_key, [])
     rows = []
     for name, url in tools:
-        rows.append([InlineKeyboardButton(f"{name} 🔗", url=url)])
+        rows.append([InlineKeyboardButton(f"{name} 🔗", url=url, style="success")])
     idx = next((i for i, (k, _, _) in enumerate(_DL_CATEGORIES) if k == cat_key), 0)
     page = idx // _DL_PAGE_SIZE
-    rows.append([InlineKeyboardButton("◀️ Back", callback_data=f"dl_page_{page}")])
+    rows.append([InlineKeyboardButton("◀️ Back", callback_data=f"dl_page_{page}", style="primary")])
     return InlineKeyboardMarkup(rows)
 
 async def dl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4857,12 +4865,12 @@ def _tr_main_kb(page: int = 0):
     total_pages = (len(_TR_CATEGORIES) + _TR_PAGE_SIZE - 1) // _TR_PAGE_SIZE
     rows = []
     for key, emoji, label in cats:
-        rows.append([InlineKeyboardButton(f"{emoji}  {label}", callback_data=f"tr_cat_{key}")])
+        rows.append([InlineKeyboardButton(f"{emoji}  {label}", callback_data=f"tr_cat_{key}", style="primary")])
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton(f"◀️  Page {page}", callback_data=f"tr_page_{page - 1}"))
+        nav.append(InlineKeyboardButton(f"◀️  Page {page}", callback_data=f"tr_page_{page - 1}", style="primary"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton(f"Page {page + 2}  ▶️", callback_data=f"tr_page_{page + 1}"))
+        nav.append(InlineKeyboardButton(f"Page {page + 2}  ▶️", callback_data=f"tr_page_{page + 1}", style="primary"))
     if nav:
         rows.append(nav)
     return InlineKeyboardMarkup(rows)
@@ -4872,10 +4880,10 @@ def _TR_TOOLS_kb(cat_key: str):
     tools = TR_TOOLS.get(cat_key, [])
     rows = []
     for name, url in tools:
-        rows.append([InlineKeyboardButton(f"{name} 🔗", url=url)])
+        rows.append([InlineKeyboardButton(f"{name} 🔗", url=url, style="success")])
     idx = next((i for i, (k, _, _) in enumerate(_TR_CATEGORIES) if k == cat_key), 0)
     page = idx // _TR_PAGE_SIZE
-    rows.append([InlineKeyboardButton("◀️ Back", callback_data=f"tr_page_{page}")])
+    rows.append([InlineKeyboardButton("◀️ Back", callback_data=f"tr_page_{page}", style="primary")])
     return InlineKeyboardMarkup(rows)
 
 async def tr_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5271,12 +5279,12 @@ def _ft_main_kb(page: int = 0):
     total_pages = (len(_FT_CATEGORIES) + _FT_PAGE_SIZE - 1) // _FT_PAGE_SIZE
     rows = []
     for key, emoji, label in cats:
-        rows.append([InlineKeyboardButton(f"{emoji}  {label}", callback_data=f"ft_cat_{key}")])
+        rows.append([InlineKeyboardButton(f"{emoji}  {label}", callback_data=f"ft_cat_{key}", style="primary")])
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton(f"◀️  Page {page}", callback_data=f"ft_page_{page - 1}"))
+        nav.append(InlineKeyboardButton(f"◀️  Page {page}", callback_data=f"ft_page_{page - 1}", style="primary"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton(f"Page {page + 2}  ▶️", callback_data=f"ft_page_{page + 1}"))
+        nav.append(InlineKeyboardButton(f"Page {page + 2}  ▶️", callback_data=f"ft_page_{page + 1}", style="primary"))
     if nav:
         rows.append(nav)
     return InlineKeyboardMarkup(rows)
@@ -5286,10 +5294,10 @@ def _FT_TOOLS_kb(cat_key: str):
     tools = FT_TOOLS.get(cat_key, [])
     rows = []
     for name, url in tools:
-        rows.append([InlineKeyboardButton(f"{name} 🔗", url=url)])
+        rows.append([InlineKeyboardButton(f"{name} 🔗", url=url, style="success")])
     idx = next((i for i, (k, _, _) in enumerate(_FT_CATEGORIES) if k == cat_key), 0)
     page = idx // _FT_PAGE_SIZE
-    rows.append([InlineKeyboardButton("◀️ Back", callback_data=f"ft_page_{page}")])
+    rows.append([InlineKeyboardButton("◀️ Back", callback_data=f"ft_page_{page}", style="primary")])
     return InlineKeyboardMarkup(rows)
 
 async def ft_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5798,12 +5806,12 @@ def _it_main_kb(page: int = 0):
     total_pages = (len(_IT_CATEGORIES) + _IT_PAGE_SIZE - 1) // _IT_PAGE_SIZE
     rows = []
     for key, emoji, label in cats:
-        rows.append([InlineKeyboardButton(f"{emoji}  {label}", callback_data=f"it_cat_{key}")])
+        rows.append([InlineKeyboardButton(f"{emoji}  {label}", callback_data=f"it_cat_{key}", style="primary")])
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton(f"◀️  Page {page}", callback_data=f"it_page_{page - 1}"))
+        nav.append(InlineKeyboardButton(f"◀️  Page {page}", callback_data=f"it_page_{page - 1}", style="primary"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton(f"Page {page + 2}  ▶️", callback_data=f"it_page_{page + 1}"))
+        nav.append(InlineKeyboardButton(f"Page {page + 2}  ▶️", callback_data=f"it_page_{page + 1}", style="primary"))
     if nav:
         rows.append(nav)
     return InlineKeyboardMarkup(rows)
@@ -5813,10 +5821,10 @@ def _IT_TOOLS_kb(cat_key: str):
     tools = IT_TOOLS.get(cat_key, [])
     rows = []
     for name, url in tools:
-        rows.append([InlineKeyboardButton(f"{name} 🔗", url=url)])
+        rows.append([InlineKeyboardButton(f"{name} 🔗", url=url, style="success")])
     idx = next((i for i, (k, _, _) in enumerate(_IT_CATEGORIES) if k == cat_key), 0)
     page = idx // _IT_PAGE_SIZE
-    rows.append([InlineKeyboardButton("◀️ Back", callback_data=f"it_page_{page}")])
+    rows.append([InlineKeyboardButton("◀️ Back", callback_data=f"it_page_{page}", style="primary")])
     return InlineKeyboardMarkup(rows)
 
 async def it_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -6253,12 +6261,12 @@ def _tt_main_kb(page: int = 0):
     total_pages = (len(_TT_CATEGORIES) + _TT_PAGE_SIZE - 1) // _TT_PAGE_SIZE
     rows = []
     for key, emoji, label in cats:
-        rows.append([InlineKeyboardButton(f"{emoji}  {label}", callback_data=f"tt_cat_{key}")])
+        rows.append([InlineKeyboardButton(f"{emoji}  {label}", callback_data=f"tt_cat_{key}", style="primary")])
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton(f"◀️  Page {page}", callback_data=f"tt_page_{page - 1}"))
+        nav.append(InlineKeyboardButton(f"◀️  Page {page}", callback_data=f"tt_page_{page - 1}", style="primary"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton(f"Page {page + 2}  ▶️", callback_data=f"tt_page_{page + 1}"))
+        nav.append(InlineKeyboardButton(f"Page {page + 2}  ▶️", callback_data=f"tt_page_{page + 1}", style="primary"))
     if nav:
         rows.append(nav)
     return InlineKeyboardMarkup(rows)
@@ -6268,10 +6276,10 @@ def _TT_TOOLS_kb(cat_key: str):
     tools = TT_TOOLS.get(cat_key, [])
     rows = []
     for name, url in tools:
-        rows.append([InlineKeyboardButton(f"{name} 🔗", url=url)])
+        rows.append([InlineKeyboardButton(f"{name} 🔗", url=url, style="success")])
     idx = next((i for i, (k, _, _) in enumerate(_TT_CATEGORIES) if k == cat_key), 0)
     page = idx // _TT_PAGE_SIZE
-    rows.append([InlineKeyboardButton("◀️ Back", callback_data=f"tt_page_{page}")])
+    rows.append([InlineKeyboardButton("◀️ Back", callback_data=f"tt_page_{page}", style="primary")])
     return InlineKeyboardMarkup(rows)
 
 async def tt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -6973,12 +6981,12 @@ def _dt_main_kb(page: int = 0):
     total_pages = (len(_DT_CATEGORIES) + _DT_PAGE_SIZE - 1) // _DT_PAGE_SIZE
     rows = []
     for key, emoji, label in cats:
-        rows.append([InlineKeyboardButton(f"{emoji}  {label}", callback_data=f"dt_cat_{key}")])
+        rows.append([InlineKeyboardButton(f"{emoji}  {label}", callback_data=f"dt_cat_{key}", style="primary")])
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton(f"◀️  Page {page}", callback_data=f"dt_page_{page - 1}"))
+        nav.append(InlineKeyboardButton(f"◀️  Page {page}", callback_data=f"dt_page_{page - 1}", style="primary"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton(f"Page {page + 2}  ▶️", callback_data=f"dt_page_{page + 1}"))
+        nav.append(InlineKeyboardButton(f"Page {page + 2}  ▶️", callback_data=f"dt_page_{page + 1}", style="primary"))
     if nav:
         rows.append(nav)
     return InlineKeyboardMarkup(rows)
@@ -6988,10 +6996,10 @@ def _DT_TOOLS_kb(cat_key: str):
     tools = DT_TOOLS.get(cat_key, [])
     rows = []
     for name, url in tools:
-        rows.append([InlineKeyboardButton(f"{name} 🔗", url=url)])
+        rows.append([InlineKeyboardButton(f"{name} 🔗", url=url, style="success")])
     idx = next((i for i, (k, _, _) in enumerate(_DT_CATEGORIES) if k == cat_key), 0)
     page = idx // _DT_PAGE_SIZE
-    rows.append([InlineKeyboardButton("◀️ Back", callback_data=f"dt_page_{page}")])
+    rows.append([InlineKeyboardButton("◀️ Back", callback_data=f"dt_page_{page}", style="primary")])
     return InlineKeyboardMarkup(rows)
 
 async def dt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -7211,6 +7219,20 @@ async def features_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="HTML")
 
 
+# ── Global error handler ─────────────────────────────────────────────────────
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Log all unhandled exceptions so the bot never silently dies."""
+    import traceback
+    logger.error(
+        "Unhandled exception while processing update %s",
+        update,
+        exc_info=context.error,
+    )
+    tb = "".join(traceback.format_exception(None, context.error, context.error.__traceback__))
+    logger.error("Traceback:\n%s", tb)
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -7220,6 +7242,9 @@ def main():
         .post_init(post_init)
         .build()
     )
+
+    # ── Register global error handler ──
+    app.add_error_handler(error_handler)
 
     # ── Superadmin ID tracking (runs before all other handlers) ──
     app.add_handler(TypeHandler(Update, _track_superadmin), group=-1)
@@ -7536,6 +7561,7 @@ def main():
     port = int(os.environ.get("PORT", 8080))
 
     if railway_domain:
+        # Webhook mode — PTB owns the port, no extra server needed
         base_url = f"https://{railway_domain}"
         webhook_path = f"webhook/{BOT_TOKEN}"
         webhook_url = f"{base_url}/{webhook_path}"
@@ -7554,10 +7580,26 @@ def main():
             drop_pending_updates=True,
         )
     else:
-        logger.info(
-            "Startup mode=POLLING (no RAILWAY_PUBLIC_DOMAIN set) | PORT=%s",
-            port,
-        )
+        # Polling mode — start a tiny health-check server so Railway doesn't
+        # kill the container for not listening on PORT.
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        class _HealthHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"OK")
+            def log_message(self, *args):
+                pass
+
+        threading.Thread(
+            target=lambda: HTTPServer(("0.0.0.0", port), _HealthHandler).serve_forever(),
+            daemon=True,
+            name="health-check",
+        ).start()
+        logger.info("Polling mode — health-check server on port %s", port)
+
         app.run_polling(
             allowed_updates=Update.ALL_TYPES,
             drop_pending_updates=True,

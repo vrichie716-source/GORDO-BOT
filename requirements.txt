@@ -1,2 +1,2 @@
-python-telegram-bot[job-queue,webhooks]==21.6
+python-telegram-bot[job-queue,webhooks]==22.7
 requests
