@@ -3719,13 +3719,10 @@ async def bcast_cfg_got_value(update: Update, context: ContextTypes.DEFAULT_TYPE
             return _BCAST_CFG_VALUE
 
         cfg.save()
-        await update.message.reply_text(
-            f"✅ <b>{field.capitalize()} updated!</b>\n\n" + cfg.__class__.__name__,
-            parse_mode="HTML",
-        )
         await context.bot.send_message(
             update.effective_chat.id,
-            "⚙️ <b>Settings</b>\n\n" + _broadcaster.get_config_text(),
+            f"✅ <b>{field.capitalize()} updated!</b>\n\n"
+            + "⚙️ <b>Settings</b>\n\n" + _broadcaster.get_config_text(),
             parse_mode="HTML",
             reply_markup=_bcast_settings_kb(),
         )
@@ -4023,299 +4020,7 @@ async def bcast_inline_text_handler(update: Update, context: ContextTypes.DEFAUL
 
 
 
-def _is_broadcaster_admin(user) -> bool:
-    """Check if a user is authorised to use /bot broadcaster.
-    Only @gordo, @gorda, and @lavado are allowed."""
-    if user is None:
-        return False
-    uname = (user.username or "").lower()
-    if uname in BROADCASTER_USERNAMES:
-        return True
-    # Also allow superadmin IDs as fallback
-    if user.id in _superadmin_ids:
-        return True
-    return False
 
-
-def _bcast_control_panel_kb() -> InlineKeyboardMarkup:
-    """Build the broadcaster control panel inline keyboard."""
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚀 Start Broadcast", callback_data="bcast_start")],
-        [InlineKeyboardButton("⏹️ Stop Broadcast", callback_data="bcast_stop")],
-        [
-            InlineKeyboardButton("📊 Status", callback_data="bcast_status"),
-            InlineKeyboardButton("⚙️ Config", callback_data="bcast_config"),
-        ],
-        [InlineKeyboardButton("🔄 Reload Config", callback_data="bcast_reload")],
-    ])
-
-
-async def bot_broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Entry point for /bot command — broadcaster control panel.
-
-    Flow:
-      1. Check user is authorised (@gordo/@gorda/@lavado)
-      2. Must be in private DM (no leaking controls in groups)
-      3. If Telethon not authenticated → start auth conversation
-      4. If authenticated → show control panel
-    """
-    user = update.effective_user
-    chat = update.effective_chat
-
-    if not _is_broadcaster_admin(user):
-        await update.message.reply_text("⛔ This command is restricted.")
-        return ConversationHandler.END
-
-    if chat.type != "private":
-        await update.message.reply_text(
-            "🔒 Use this command in a DM with me for security."
-        )
-        return ConversationHandler.END
-
-    # Check if Telethon credentials are configured
-    api_id = os.environ.get("TG_API_ID", "").strip()
-    api_hash = os.environ.get("TG_API_HASH", "").strip()
-    if not api_id or not api_hash:
-        await update.message.reply_text(
-            "⚠️ <b>Broadcaster not configured.</b>\n\n"
-            "Set these environment variables:\n"
-            "• <code>TG_API_ID</code> — from my.telegram.org\n"
-            "• <code>TG_API_HASH</code> — from my.telegram.org\n"
-            "• <code>TG_PHONE</code> — phone number for the sender account\n\n"
-            "Optional (for Railway persistence):\n"
-            "• <code>TG_SESSION</code> — Telethon session string",
-            parse_mode="HTML",
-        )
-        return ConversationHandler.END
-
-    # Try to connect and check auth status
-    try:
-        if not _broadcaster.client:
-            _broadcaster._create_client()
-        if not _broadcaster.client.is_connected():
-            await _broadcaster.connect()
-
-        if await _broadcaster.is_authenticated():
-            # Already authenticated — show control panel
-            await update.message.reply_text(
-                "📡 <b>𝔾𝕠𝕣𝕕𝕠's Broadcaster</b>\n\n"
-                "Your sender account is authenticated and ready.\n"
-                "Use the buttons below to control broadcasts.",
-                parse_mode="HTML",
-                reply_markup=_bcast_control_panel_kb(),
-            )
-            return ConversationHandler.END
-        else:
-            # Not authenticated — start auth flow
-            phone = os.environ.get("TG_PHONE", "").strip()
-            if not phone:
-                await update.message.reply_text(
-                    "⚠️ <code>TG_PHONE</code> environment variable is not set.\n"
-                    "Set the phone number of the sender account.",
-                    parse_mode="HTML",
-                )
-                return ConversationHandler.END
-
-            # Send login code
-            phone_code_hash = await _broadcaster.send_code()
-            context.user_data["bcast_phone_code_hash"] = phone_code_hash
-
-            await update.message.reply_text(
-                "📲 <b>Authentication Required</b>\n\n"
-                f"A login code has been sent to <code>{phone}</code>.\n\n"
-                "📩 <b>Type the code here</b> (e.g. <code>12345</code>)\n\n"
-                "Send /cancel to abort.",
-                parse_mode="HTML",
-            )
-            return _BCAST_AUTH_CODE
-
-    except Exception as e:
-        logger.error("Broadcaster auth error: %s", e)
-        await update.message.reply_text(
-            f"❌ Error connecting to Telegram: <code>{e}</code>",
-            parse_mode="HTML",
-        )
-        return ConversationHandler.END
-
-
-async def bcast_got_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Received the login code — attempt sign-in."""
-    code = (update.message.text or "").strip()
-    phone_code_hash = context.user_data.get("bcast_phone_code_hash", "")
-
-    if not code:
-        await update.message.reply_text("Please enter the code, or /cancel.")
-        return _BCAST_AUTH_CODE
-
-    try:
-        result = await _broadcaster.sign_in_code(code, phone_code_hash)
-
-        if result == "2fa":
-            # Account has 2FA — ask for password
-            await update.message.reply_text(
-                "🔐 <b>Two-Factor Authentication Detected</b>\n\n"
-                "This account has 2FA enabled.\n"
-                "<b>Please type your 2FA password:</b>\n\n"
-                "Send /cancel to abort.",
-                parse_mode="HTML",
-            )
-            return _BCAST_AUTH_2FA
-
-        # result == "ok" — auth successful
-        session_str = _broadcaster.client.session.save()
-        await update.message.reply_text(
-            "✅ <b>Authentication Successful!</b>\n\n"
-            "Your sender account is now connected.\n\n"
-            "💾 <b>Session saved.</b> To persist on Railway, add this\n"
-            "as the <code>TG_SESSION</code> environment variable:\n\n"
-            f"<code>{session_str}</code>\n\n"
-            "Use the control panel below to start broadcasting.",
-            parse_mode="HTML",
-            reply_markup=_bcast_control_panel_kb(),
-        )
-        context.user_data.pop("bcast_phone_code_hash", None)
-        return ConversationHandler.END
-
-    except Exception as e:
-        logger.error("Broadcaster sign-in error: %s", e)
-        await update.message.reply_text(
-            f"❌ Sign-in failed: <code>{e}</code>\n\n"
-            "Check the code and try again, or /cancel.",
-            parse_mode="HTML",
-        )
-        return _BCAST_AUTH_CODE
-
-
-async def bcast_got_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Received the 2FA password — complete sign-in."""
-    password = (update.message.text or "").strip()
-
-    if not password:
-        await update.message.reply_text("Please enter your 2FA password, or /cancel.")
-        return _BCAST_AUTH_2FA
-
-    try:
-        await _broadcaster.sign_in_2fa(password)
-
-        session_str = _broadcaster.client.session.save()
-
-        # Delete the message containing the password for security
-        try:
-            await update.message.delete()
-        except (BadRequest, TelegramError):
-            pass
-
-        await context.bot.send_message(
-            update.effective_chat.id,
-            "✅ <b>2FA Authentication Successful!</b>\n\n"
-            "Your sender account is now connected.\n"
-            "(Your password message was deleted for security.)\n\n"
-            "💾 <b>Session saved.</b> To persist on Railway, add this\n"
-            "as the <code>TG_SESSION</code> environment variable:\n\n"
-            f"<code>{session_str}</code>\n\n"
-            "Use the control panel below to start broadcasting.",
-            parse_mode="HTML",
-            reply_markup=_bcast_control_panel_kb(),
-        )
-        context.user_data.pop("bcast_phone_code_hash", None)
-        return ConversationHandler.END
-
-    except Exception as e:
-        logger.error("Broadcaster 2FA error: %s", e)
-        await update.message.reply_text(
-            f"❌ 2FA failed: <code>{e}</code>\n\n"
-            "Check the password and try again, or /cancel.",
-            parse_mode="HTML",
-        )
-        return _BCAST_AUTH_2FA
-
-
-async def bcast_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancel the broadcaster auth flow."""
-    context.user_data.pop("bcast_phone_code_hash", None)
-    await update.message.reply_text("❌ Broadcaster authentication cancelled.")
-    return ConversationHandler.END
-
-
-async def bcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle all bcast_ callback queries from the control panel buttons."""
-    query = update.callback_query
-    user = query.from_user
-
-    if not _is_broadcaster_admin(user):
-        await query.answer("⛔ Not authorised.", show_alert=True)
-        return
-
-    await query.answer()
-    action = query.data
-
-    if action == "bcast_start":
-        # ── Start Broadcast ──
-        if _broadcaster.is_running:
-            await query.edit_message_text(
-                "⚠️ A broadcast is already running.\n\n"
-                + _broadcaster.get_status_text(),
-                parse_mode="HTML",
-                reply_markup=_bcast_control_panel_kb(),
-            )
-            return
-
-        if not await _broadcaster.is_authenticated():
-            await query.edit_message_text(
-                "⚠️ Sender account is not authenticated.\n"
-                "Use /bot to authenticate first.",
-                parse_mode="HTML",
-            )
-            return
-
-        # Define progress callback that sends updates to the admin
-        chat_id = query.message.chat_id
-        async def _progress(msg: str):
-            try:
-                await context.bot.send_message(chat_id, msg)
-            except TelegramError:
-                pass
-
-        result = await _broadcaster.start_broadcast(progress_callback=_progress)
-        await query.edit_message_text(
-            result + "\n\nUse the panel below to monitor or stop.",
-            parse_mode="HTML",
-            reply_markup=_bcast_control_panel_kb(),
-        )
-
-    elif action == "bcast_stop":
-        # ── Stop Broadcast ──
-        result = await _broadcaster.stop_broadcast()
-        await query.edit_message_text(
-            result + "\n\n" + _broadcaster.get_status_text(),
-            parse_mode="HTML",
-            reply_markup=_bcast_control_panel_kb(),
-        )
-
-    elif action == "bcast_status":
-        # ── Show Status ──
-        await query.edit_message_text(
-            _broadcaster.get_status_text(),
-            parse_mode="HTML",
-            reply_markup=_bcast_control_panel_kb(),
-        )
-
-    elif action == "bcast_config":
-        # ── Show Config ──
-        await query.edit_message_text(
-            _broadcaster.get_config_text(),
-            parse_mode="HTML",
-            reply_markup=_bcast_control_panel_kb(),
-        )
-
-    elif action == "bcast_reload":
-        # ── Reload Config ──
-        _broadcaster.config.reload()
-        await query.edit_message_text(
-            "🔄 Config reloaded!\n\n" + _broadcaster.get_config_text(),
-            parse_mode="HTML",
-            reply_markup=_bcast_control_panel_kb(),
-        )
 
 
 # ── post_init: verify bot membership in configured groups ────────────────────
@@ -4335,11 +4040,10 @@ async def post_init(application: Application):
             )
 
     # ── Initialise Telethon broadcaster client ──
-    # If TG_API_ID and TG_API_HASH are set, pre-connect the Telethon client
-    # so that /bot doesn't need to connect from scratch each time.
-    api_id = os.environ.get("TG_API_ID", "").strip()
-    api_hash = os.environ.get("TG_API_HASH", "").strip()
-    if api_id and api_hash:
+    # If credentials file exists (saved by the /bot setup wizard),
+    # pre-connect the Telethon client so /bot is instant next time.
+    from broadcaster import SessionManager as SM
+    if SM.has_credentials():
         try:
             _broadcaster._create_client()
             await _broadcaster.connect()
@@ -4351,7 +4055,7 @@ async def post_init(application: Application):
                 )
             else:
                 logger.info(
-                    "ℹ️  Broadcaster client connected but not authenticated. "
+                    "ℹ️  Broadcaster credentials found but not authenticated. "
                     "Use /bot in a DM to log in."
                 )
         except Exception as e:
