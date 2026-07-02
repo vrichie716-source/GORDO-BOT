@@ -3679,9 +3679,14 @@ async def bcast_got_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def bcast_auth_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancel the broadcaster auth conversation."""
+    """Cancel the broadcaster auth conversation (and any pending config edits)."""
     context.user_data.pop("bcast_phone_code_hash", None)
-    await update.message.reply_text("❌ Authentication cancelled.")
+    context.user_data.pop("bcast_cfg_field", None)
+    context.user_data.pop("bcast_awaiting_cfg", None)
+    context.user_data.pop("bcast_awaiting_add_msg", None)
+    context.user_data.pop("bcast_setup_api_id", None)
+    context.user_data.pop("bcast_setup_api_hash", None)
+    await update.message.reply_text("❌ Cancelled.")
     return ConversationHandler.END
 
 
@@ -3716,6 +3721,8 @@ async def bcast_cfg_got_value(update: Update, context: ContextTypes.DEFAULT_TYPE
             cfg.warmup_count = val
         else:
             await update.message.reply_text("⚠️ Unknown field. Try /cancel.")
+            # Re-set flag so the next message is still handled (retry)
+            context.user_data["bcast_awaiting_cfg"] = True
             return _BCAST_CFG_VALUE
 
         cfg.save()
@@ -3727,6 +3734,7 @@ async def bcast_cfg_got_value(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=_bcast_settings_kb(),
         )
         context.user_data.pop("bcast_cfg_field", None)
+        # Do NOT re-set awaiting flag — edit is complete
         return ConversationHandler.END
 
     except ValueError as e:
@@ -3734,6 +3742,8 @@ async def bcast_cfg_got_value(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"⚠️ Invalid value: {e}\n\nTry again, or /cancel.",
             parse_mode="HTML",
         )
+        # Re-set flag so the next message is still handled (retry)
+        context.user_data["bcast_awaiting_cfg"] = True
         return _BCAST_CFG_VALUE
 
 
@@ -4006,6 +4016,9 @@ async def bcast_inline_text_handler(update: Update, context: ContextTypes.DEFAUL
         return
 
     # ── Config value edit ──
+    # NOTE: do NOT pop the flag here — bcast_cfg_got_value manages it.
+    # On success it pops bcast_cfg_field; on error it re-sets bcast_awaiting_cfg
+    # so the next message is still handled for retry.
     if context.user_data.get("bcast_awaiting_cfg"):
         context.user_data.pop("bcast_awaiting_cfg", None)
         await bcast_cfg_got_value(update, context)
