@@ -9,3 +9,4 @@ broadcaster_session.txt
 broadcast_log.jsonl
 broadcaster_config.yaml
 broadcaster_credentials.json
+.venv/
