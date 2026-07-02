@@ -90,7 +90,7 @@ class BroadcasterConfig:
     max_per_hour: int = 30
 
     # Anti-ban
-    warmup_count: int = 5          # first N messages use 2× delay
+    warmup_count: int = 2          # first N rounds use 2× delay
     flood_wait_buffer_min: int = 5
     flood_wait_buffer_max: int = 30
 
