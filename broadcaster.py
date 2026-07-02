@@ -214,14 +214,27 @@ class SessionManager:
 
     @staticmethod
     def load_session() -> str:
-        """Get the stored session string (from creds file or env var)."""
+        """Get the stored session string (from creds file or env var).
+
+        Priority:
+          1. Credentials file session field (ALWAYS used if file exists,
+             even when empty — empty string = fresh session for Telethon).
+          2. TG_SESSION env var — ONLY when NO credentials file exists at all
+             (legacy Railway env-var workflow).
+
+        This prevents a stale TG_SESSION env var from corrupting the setup
+        wizard, which caused Telethon's 'Not a valid string' error.
+        """
         creds = SessionManager.load()
-        if creds.get("session"):
-            return creds["session"]
-        # Fallback: legacy TG_SESSION env var
+        if creds:  # credentials file exists — trust it completely
+            session = creds.get("session") or ""
+            if session:
+                logger.debug("Using session from credentials file.")
+            return session
+        # No credentials file at all — fall back to legacy TG_SESSION env var
         session = os.environ.get("TG_SESSION", "").strip()
         if session:
-            logger.info("Using session from TG_SESSION env var (legacy).")
+            logger.info("Using session from TG_SESSION env var (legacy fallback).")
         return session
 
     @staticmethod
