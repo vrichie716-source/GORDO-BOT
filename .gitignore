@@ -7,6 +7,7 @@ __pycache__/
 *.session
 broadcaster_session.txt
 broadcast_log.jsonl
+broadcast_media/
 broadcaster_config.yaml
 broadcaster_credentials.json
 .venv/

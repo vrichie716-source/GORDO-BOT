@@ -613,6 +613,14 @@ class Broadcaster:
         """Permanently remove a template by index and save config."""
         if 0 <= idx < len(self.config.messages):
             removed = self.config.messages.pop(idx)
+            # Clean up local media file if it exists
+            media_path = removed.get("media")
+            if media_path and os.path.isfile(media_path):
+                try:
+                    os.remove(media_path)
+                    logger.info("Deleted media file: %s", media_path)
+                except OSError as e:
+                    logger.warning("Could not delete media file %s: %s", media_path, e)
             # Adjust disabled set — remove deleted index, shift higher ones down
             new_disabled = set()
             for d in self._disabled_templates:
@@ -836,10 +844,10 @@ class Broadcaster:
 
                 if progress_callback:
                     await progress_callback(
-                        f"📡 <b>Round {round_num} started</b>\n\n"
-                        f"🎯 Groups: <b>{total_groups}</b>\n"
-                        f"📝 Messages this round: <b>{total_templates}</b>\n"
-                        f"⏱ Round interval: <b>~{self.config.delay_minutes} min</b>"
+                        f"━━━━━ <b>ROUND {round_num}</b> ━━━━━━━━━━━\n\n"
+                        f"  🎯  <b>{total_groups}</b> groups targeted\n"
+                        f"  📝  <b>{total_templates}</b> message{'s' if total_templates != 1 else ''} queued\n"
+                        f"  ⏱  ~<b>{self.config.delay_minutes}</b> min between rounds"
                     )
 
                 # ── Send each template to all groups ──
@@ -851,8 +859,10 @@ class Broadcaster:
                     if self._pause_event.is_set():
                         if progress_callback:
                             await progress_callback(
-                                f"⏸ Paused before message {tmpl_num + 1}/{total_templates} "
-                                f"in round {round_num}."
+                                f"⏸ <b>Broadcast paused</b>\n"
+                                f"  ├ Message <b>{tmpl_num + 1}/{total_templates}</b>\n"
+                                f"  └ Round <b>{round_num}</b>\n\n"
+                                f"<i>Tap ▶️ Resume to continue.</i>"
                             )
                         while self._pause_event.is_set():
                             if self._stop_event.is_set():
@@ -861,7 +871,7 @@ class Broadcaster:
                         if self._stop_event.is_set():
                             break
                         if progress_callback:
-                            await progress_callback(f"▶️ Resumed round {round_num}.")
+                            await progress_callback(f"▶️ <b>Resumed</b> · Round {round_num}")
 
                     template = self.config.messages[tmpl_idx]
                     raw_text = template.get("text", "")
@@ -892,8 +902,9 @@ class Broadcaster:
                                             details=f"Waiting {wait_time:.0f}s.")
                             if progress_callback:
                                 await progress_callback(
-                                    f"⏳ Safety cap reached ({self.config.max_per_hour}/hr). "
-                                    f"Waiting {wait_time:.0f}s..."
+                                    f"⏳ <b>Safety cap reached</b>\n"
+                                    f"  ├ Limit: <b>{self.config.max_per_hour}</b>/hr\n"
+                                    f"  └ Resuming in <b>{wait_time:.0f}s</b>"
                                 )
                             if not await self._interruptible_sleep(wait_time):
                                 break
@@ -927,7 +938,10 @@ class Broadcaster:
                                             details=f"FloodWait {e.seconds}s + {buffer}s buffer.")
                             if progress_callback:
                                 await progress_callback(
-                                    f"⚠️ <b>Telegram slow-down!</b> Waiting {total_wait}s..."
+                                    f"⚠️ <b>Flood protection triggered</b>\n"
+                                    f"  ├ Required wait: <b>{e.seconds}s</b>\n"
+                                    f"  ├ Safety buffer: <b>+{buffer}s</b>\n"
+                                    f"  └ Total pause: <b>{total_wait}s</b>"
                                 )
                             if not await self._interruptible_sleep(total_wait):
                                 break
@@ -980,8 +994,8 @@ class Broadcaster:
                     if tmpl_num < total_templates - 1:
                         if progress_callback:
                             await progress_callback(
-                                f"⏳ Message {tmpl_num+1}/{total_templates} sent. "
-                                f"Waiting 1 min before next message..."
+                                f"✅ Message <b>{tmpl_num+1}/{total_templates}</b> delivered\n"
+                                f"  └ Next message in <b>60s</b>…"
                             )
                         if not await self._interruptible_sleep(60):
                             break
@@ -992,10 +1006,10 @@ class Broadcaster:
                 # ── Progress after completing this round ──
                 if progress_callback and self.stats["sent"] % 5 == 0 and self.stats["sent"] > 0:
                     await progress_callback(
-                        f"📊 Round {round_num} done\n"
-                        f"✅ Sent: <b>{self.stats['sent']}</b>  "
-                        f"❌ Failed: {self.stats['failed']}  "
-                        f"⏭ Skipped: {self.stats['skipped']}"
+                        f"📊 <b>Round {round_num} complete</b>\n\n"
+                        f"  ├ ✅ Sent: <b>{self.stats['sent']}</b>\n"
+                        f"  ├ ❌ Failed: <b>{self.stats['failed']}</b>\n"
+                        f"  └ ⏭ Skipped: <b>{self.stats['skipped']}</b>"
                     )
 
                 # ── Wait delay_minutes ± variance before next round ──
@@ -1010,123 +1024,26 @@ class Broadcaster:
                 wait_mins = round(randomized_delay / 60, 1)
                 if progress_callback:
                     await progress_callback(
-                        f"💤 All {total_templates} message(s) sent this round.\n"
-                        f"Next round in <b>~{wait_mins} min</b>."
+                        f"✅ <b>Round {round_num} complete</b>\n\n"
+                        f"  ├ Delivered <b>{total_templates}</b> message{'s' if total_templates != 1 else ''}\n"
+                        f"  └ Next round in ~<b>{wait_mins}</b> min"
                     )
                 AuditLogger.log("round_complete", details=f"Round {round_num} done. Next in {wait_mins}min.")
 
                 if not await self._interruptible_sleep(randomized_delay):
                     break
 
-                    logger.info("Waiting %.1fs before next send...", randomized_delay)
-                    if not await self._interruptible_sleep(randomized_delay):
-                        break
-
-                if self._stop_event.is_set():
-                    break
-
-                # ── 2d. Pick next message template ──
-                message = msg_engine.next_message()
-                if message is None:
-                    # All templates became disabled mid-run
-                    AuditLogger.log("broadcast_abort", details="All templates disabled.")
-                    if progress_callback:
-                        await progress_callback("⚠️ All templates disabled. Broadcast stopped.")
-                    break
-
-                # ── 2e. Send ──
-                try:
-                    if message.get("media"):
-                        await self.client.send_file(chat_id, message["media"],
-                                                    caption=message.get("text", ""))
-                    else:
-                        await self.client.send_message(chat_id, message["text"])
-
-                    send_count += 1
-                    self.stats["sent"] += 1
-                    self._rate_limiter.record_send()
-                    AuditLogger.log("send_success", chat_id=chat_id, chat_title=chat_title,
-                                    status="ok", details=f"Msg {send_count}/{total}.")
-                    logger.info("[%d/%d] ✅ Sent to '%s'", i + 1, total, chat_title)
-
-                    # Progress update every 5 sends
-                    if progress_callback and send_count % 5 == 0:
-                        await progress_callback(
-                            f"📡 Progress: <b>{send_count}/{total}</b> sent\n"
-                            f"❌ Failed: {self.stats['failed']} | ⏭ Skipped: {self.stats['skipped']}\n"
-                            f"⏳ Flood waits: {self.stats['flood_waits']}"
-                        )
-
-                except errors.FloodWaitError as e:
-                    # ANTI-BAN: Telegram demands we wait e.seconds.
-                    # We add a random buffer so we don't look robotic.
-                    self.stats["flood_waits"] += 1
-                    buffer = random.randint(self.config.flood_wait_buffer_min,
-                                           self.config.flood_wait_buffer_max)
-                    total_wait = e.seconds + buffer
-                    AuditLogger.log("flood_wait", chat_id=chat_id, chat_title=chat_title,
-                                    status="paused",
-                                    details=f"FloodWait {e.seconds}s + {buffer}s buffer.")
-                    logger.warning("⏳ FloodWait: %ds required + %ds buffer", e.seconds, buffer)
-                    if progress_callback:
-                        await progress_callback(
-                            f"⚠️ <b>FloodWait!</b> Telegram requires {e.seconds}s pause.\n"
-                            f"Waiting {total_wait}s (includes {buffer}s safety buffer)..."
-                        )
-                    if not await self._interruptible_sleep(total_wait):
-                        break
-                    # Retry the same group
-                    try:
-                        if message.get("media"):
-                            await self.client.send_file(chat_id, message["media"],
-                                                        caption=message.get("text", ""))
-                        else:
-                            await self.client.send_message(chat_id, message["text"])
-                        send_count += 1
-                        self.stats["sent"] += 1
-                        self._rate_limiter.record_send()
-                        AuditLogger.log("send_success_retry", chat_id=chat_id,
-                                        chat_title=chat_title, details="Sent after FloodWait.")
-                    except Exception as retry_err:
-                        self.stats["failed"] += 1
-                        AuditLogger.log("send_fail_retry", chat_id=chat_id, status="error",
-                                        details=str(retry_err))
-
-                except (errors.ChatWriteForbiddenError, errors.UserBannedInChannelError,
-                        errors.ChatAdminRequiredError):
-                    self.stats["skipped"] += 1
-                    AuditLogger.log("send_skip", chat_id=chat_id, chat_title=chat_title,
-                                    status="skipped", details="No write permission.")
-                    logger.warning("[%d/%d] ⚠️ No permission in '%s'", i + 1, total, chat_title)
-
-                except errors.SlowModeWaitError as e:
-                    self.stats["skipped"] += 1
-                    AuditLogger.log("send_skip", chat_id=chat_id, chat_title=chat_title,
-                                    status="skipped", details=f"Slow mode ({e.seconds}s).")
-
-                except (ConnectionError, OSError) as e:
-                    self.stats["failed"] += 1
-                    AuditLogger.log("send_fail", chat_id=chat_id, status="error",
-                                    details=f"Network error: {e}")
-                    logger.error("Network error sending to '%s': %s", chat_title, e)
-                    await asyncio.sleep(10)
-
-                except Exception as e:
-                    self.stats["failed"] += 1
-                    AuditLogger.log("send_fail", chat_id=chat_id, chat_title=chat_title,
-                                    status="error", details=str(e))
-                    logger.error("[%d/%d] ❌ Failed to send to '%s': %s", i+1, total, chat_title, e)
-
             # ── Broadcast complete ──
             self.stats["finished_at"] = datetime.now(timezone.utc).isoformat()
             self.stats["current_group"] = ""
             summary = (
-                f"✅ <b>Broadcast complete!</b>\n\n"
-                f"📊 <b>Results:</b>\n"
-                f"  ✅ Sent: <b>{self.stats['sent']}</b>\n"
-                f"  ❌ Failed: <b>{self.stats['failed']}</b>\n"
-                f"  ⏭ Skipped: <b>{self.stats['skipped']}</b>\n"
-                f"  ⏳ Flood waits: <b>{self.stats['flood_waits']}</b>"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"  ✅ <b>BROADCAST COMPLETE</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"  ├ ✅ Sent:         <b>{self.stats['sent']}</b>\n"
+                f"  ├ ❌ Failed:       <b>{self.stats['failed']}</b>\n"
+                f"  ├ ⏭ Skipped:      <b>{self.stats['skipped']}</b>\n"
+                f"  └ ⚠️ Flood waits:  <b>{self.stats['flood_waits']}</b>"
             )
             AuditLogger.log("broadcast_complete", details=json.dumps(self.stats))
             logger.info("Broadcast complete: %s", json.dumps(self.stats))
@@ -1140,96 +1057,123 @@ class Broadcaster:
             logger.error("Broadcast loop crashed: %s", e, exc_info=True)
             AuditLogger.log("broadcast_crash", status="error", details=str(e))
             if progress_callback:
-                await progress_callback(f"❌ Broadcast crashed: <code>{e}</code>")
+                await progress_callback(
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"  ❌ <b>BROADCAST ERROR</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"  <code>{e}</code>\n\n"
+                    f"<i>Use /bot to restart the broadcaster.</i>"
+                )
 
     # ── Status / Display Helpers ──────────────────────────────────────────
 
     def get_status_text(self) -> str:
         """Build a rich HTML status summary."""
         if self.is_running:
-            state = "⏸ PAUSED" if self.is_paused else "📡 RUNNING"
+            state_icon = "⏸" if self.is_paused else "●"
+            state_label = "PAUSED" if self.is_paused else "BROADCASTING"
             elapsed = ""
             if self.stats.get("started_at"):
                 start = datetime.fromisoformat(self.stats["started_at"])
                 delta = datetime.now(timezone.utc) - start
-                mins, secs = divmod(int(delta.total_seconds()), 60)
-                elapsed = f"  ⏱ Running: <b>{mins}m {secs}s</b>\n"
+                hrs, remainder = divmod(int(delta.total_seconds()), 3600)
+                mins, secs = divmod(remainder, 60)
+                if hrs > 0:
+                    elapsed = f"  ├ ⏱ Uptime: <b>{hrs}h {mins}m {secs}s</b>\n"
+                else:
+                    elapsed = f"  ├ ⏱ Uptime: <b>{mins}m {secs}s</b>\n"
 
             progress = ""
             if self.stats.get("total_targets"):
                 pct = int(self.stats["current_index"] / self.stats["total_targets"] * 100)
-                progress = (
-                    f"  📈 Progress: <b>{self.stats['current_index']}/{self.stats['total_targets']}</b>"
-                    f" ({pct}%)\n"
-                )
+                bar_filled = round(pct / 10)
+                bar = "▓" * bar_filled + "░" * (10 - bar_filled)
+                progress = f"  ├ 📈 Progress: {bar} <b>{pct}%</b>\n"
                 if self.stats.get("current_group"):
-                    progress += f"  📍 Current: <i>{self.stats['current_group']}</i>\n"
+                    progress += f"  ├ 📍 Current: <i>{self.stats['current_group']}</i>\n"
+
+            rate = self._rate_limiter.current_count()
+            rate_bar_filled = min(10, round(rate / max(self.config.max_per_hour, 1) * 10))
+            rate_bar = "▓" * rate_bar_filled + "░" * (10 - rate_bar_filled)
 
             return (
-                f"📡 <b>Status: {state}</b>\n"
-                f"{'━' * 28}\n"
+                f"{state_icon} <b>{state_label}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"{elapsed}"
-                f"{progress}\n"
-                f"  ✅ Sent: <b>{self.stats['sent']}</b>\n"
-                f"  ❌ Failed: <b>{self.stats['failed']}</b>\n"
-                f"  ⏭ Skipped: <b>{self.stats['skipped']}</b>\n"
-                f"  ⏳ Flood waits: <b>{self.stats['flood_waits']}</b>\n"
-                f"  📊 Rate: <b>{self._rate_limiter.current_count()}/{self.config.max_per_hour}</b>/hr"
+                f"{progress}"
+                f"  ├ ✅ Sent: <b>{self.stats['sent']}</b>\n"
+                f"  ├ ❌ Failed: <b>{self.stats['failed']}</b>\n"
+                f"  ├ ⏭ Skipped: <b>{self.stats['skipped']}</b>\n"
+                f"  ├ ⚠️ Flood waits: <b>{self.stats['flood_waits']}</b>\n"
+                f"  └ 📊 Rate: {rate_bar} <b>{rate}/{self.config.max_per_hour}</b>/hr"
             )
         else:
             last_run = ""
             if self.stats.get("finished_at"):
-                last_run = f"\n  🕐 Last run: <i>{self.stats['finished_at'][:19].replace('T', ' ')} UTC</i>"
+                ts = self.stats['finished_at'][:19].replace('T', ' ')
+                last_run = f"\n  └ 🕐 Last run: <i>{ts} UTC</i>"
+            else:
+                last_run = "\n  └ <i>No previous broadcast data</i>"
             return (
-                f"📡 <b>Status: 💤 IDLE</b>\n"
-                f"{'━' * 28}\n"
-                f"  ✅ Last sent: <b>{self.stats['sent']}</b>\n"
-                f"  ❌ Last failed: <b>{self.stats['failed']}</b>\n"
-                f"  ⏭ Last skipped: <b>{self.stats['skipped']}</b>"
+                f"💤 <b>IDLE</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"  ├ ✅ Last sent: <b>{self.stats['sent']}</b>\n"
+                f"  ├ ❌ Last failed: <b>{self.stats['failed']}</b>\n"
+                f"  ├ ⏭ Last skipped: <b>{self.stats['skipped']}</b>"
                 f"{last_run}"
             )
 
     def get_config_text(self) -> str:
         """Build a rich HTML config summary."""
         folders = ", ".join(self.config.target_folders) if self.config.target_folders else "<i>None</i>"
-        excepts = str(len(self.config.exceptions)) + " group(s)" if self.config.exceptions else "<i>None</i>"
+        exc_count = len(self.config.exceptions)
+        excepts = f"<b>{exc_count}</b> group{'s' if exc_count != 1 else ''}" if exc_count else "<i>None</i>"
         active = len(self.config.messages) - len(self._disabled_templates)
-        active_msgs = [m for i, m in enumerate(self.config.messages) if i not in self._disabled_templates]
-        template_gap_note = (
-            f" ({len(active_msgs)} msgs × 1 min gap = ~{len(active_msgs)} min per round)"
-            if len(active_msgs) > 1 else ""
-        )
+        total = len(self.config.messages)
+
+        arch_icon = "✅" if self.config.include_archived else "❌"
 
         return (
-            f"{'━' * 28}\n\n"
-            f"🎯 <b>Targets:</b>\n"
-            f"  {'✅' if self.config.include_archived else '❌'} Archived groups\n"
-            f"  📁 Folders: {folders}\n"
-            f"  🚫 Exceptions: {excepts}\n\n"
-            f"📝 <b>Templates:</b> {active}/{len(self.config.messages)} active\n\n"
-            f"⏱ <b>Timing:</b>\n"
-            f"  🔁 <b>Round delay:</b> <code>{self.config.delay_minutes} min</code>\n"
-            f"  <i>Wait between rounds (after all messages are sent)</i>\n\n"
-            f"  🎲 <b>Variance:</b> <code>±{int(self.config.delay_variance * 100)}%</code>\n"
-            f"  <i>Random ±% added to the round delay to look less robotic</i>\n\n"
-            f"  📊 <b>Safety cap:</b> <code>{self.config.max_per_hour}/hour</code>\n"
-            f"  <i>Max messages per hour — pauses automatically if exceeded</i>\n\n"
-            f"  🌡 <b>Warmup:</b> <code>{self.config.warmup_count} rounds at 2× delay</code>\n"
-            f"  <i>First {self.config.warmup_count} rounds are slower to avoid spam detection</i>\n\n"
-            f"🛡 <b>FloodWait buffer:</b> {self.config.flood_wait_buffer_min}–{self.config.flood_wait_buffer_max}s\n"
-            f"  <i>Extra wait time added on top of Telegram's own slow-down penalty</i>"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"◆ <b>TARGETS</b>\n"
+            f"  ├ {arch_icon} Archived groups\n"
+            f"  ├ 📁 Folders: {folders}\n"
+            f"  └ 🚫 Exceptions: {excepts}\n\n"
+            f"◆ <b>TEMPLATES</b>\n"
+            f"  └ <b>{active}</b>/{total} active\n\n"
+            f"◆ <b>TIMING</b>\n"
+            f"  ├ 🔁 Round delay: <code>{self.config.delay_minutes} min</code>\n"
+            f"  │   <i>Wait between rounds after all messages sent</i>\n"
+            f"  ├ 🎲 Variance: <code>±{int(self.config.delay_variance * 100)}%</code>\n"
+            f"  │   <i>Randomizes delay to appear organic</i>\n"
+            f"  └ 📊 Safety cap: <code>{self.config.max_per_hour}/hr</code>\n"
+            f"      <i>Auto-pauses if exceeded</i>\n\n"
+            f"◆ <b>ANTI-BAN</b>\n"
+            f"  ├ 🌡 Warmup: <code>{self.config.warmup_count} rounds × 2× delay</code>\n"
+            f"  └ 🛡 Flood buffer: <code>{self.config.flood_wait_buffer_min}–{self.config.flood_wait_buffer_max}s</code>"
         )
 
     def get_templates_text(self) -> str:
         """Build a summary of all message templates."""
         if not self.config.messages:
-            return "📝 <b>No message templates configured.</b>"
-        lines = [f"📝 <b>Message Templates ({len(self.config.messages)} total)</b>\n{'━' * 28}\n"]
+            return (
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "  📝 <b>NO TEMPLATES</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "<i>Add a message template to start broadcasting.</i>"
+            )
+        active = sum(1 for i in range(len(self.config.messages)) if i not in self._disabled_templates)
+        lines = [
+            f"📝 <b>TEMPLATES</b> · {active}/{len(self.config.messages)} active\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        ]
         for i, msg in enumerate(self.config.messages):
-            state = "✅" if i not in self._disabled_templates else "⏸"
+            state = "●" if i not in self._disabled_templates else "○"
             preview = msg.get("text", "")[:50].replace("<", "&lt;").replace(">", "&gt;")
             if len(msg.get("text", "")) > 50:
-                preview += "..."
+                preview += "…"
             media_tag = " 📎" if msg.get("media") else ""
-            lines.append(f"{state} <b>#{i+1}</b>{media_tag}: <i>{preview}</i>")
+            emoji_count = sum(1 for e in (msg.get("entities") or []) if e.get("type") == "custom_emoji")
+            emoji_tag = f" ✨{emoji_count}" if emoji_count else ""
+            lines.append(f"{state} <b>#{i+1}</b>{media_tag}{emoji_tag}  <i>{preview}</i>")
         return "\n".join(lines)

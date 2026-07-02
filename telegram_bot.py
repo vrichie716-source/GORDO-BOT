@@ -3393,20 +3393,18 @@ async def bot_broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     # ── Step 1: Check if credentials are stored ──
-    # If credentials file doesn't exist, start the interactive setup wizard.
-    # The wizard collects API ID, API HASH, and phone number, then
-    # triggers authentication automatically.
     from broadcaster import SessionManager as SM
     if not SM.has_credentials():
         await update.message.reply_text(
-            "🚀 <b>Broadcaster Setup Wizard</b>\n\n"
-            "I need a few details to connect your Telegram account.\n"
-            "This is a one-time setup — credentials are saved locally.\n\n"
-            "<b>Step 1/3 — API ID</b>\n"
-            "Go to <a href='https://my.telegram.org'>my.telegram.org</a>, "
-            "log in, then copy your <b>App api_id</b>.\n\n"
-            "Send it here (numbers only, e.g. <code>12345678</code>)\n\n"
-            "Send /cancel to abort.",
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"  🔧 <b>SETUP WIZARD</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"◆ <b>Step 1 of 3 · API Credentials</b>\n\n"
+            f"Visit <a href='https://my.telegram.org'>my.telegram.org</a>, "
+            f"log in, and copy your <b>App api_id</b>.\n\n"
+            f"📤 Send your API ID below\n"
+            f"<i>(e.g. <code>12345678</code>)</i>\n\n"
+            f"Send /cancel to abort.",
             parse_mode="HTML",
             disable_web_page_preview=True,
         )
@@ -3421,11 +3419,15 @@ async def bot_broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if await _broadcaster.is_authenticated():
             me = await _broadcaster.client.get_me()
+            username_str = f" · @{me.username}" if me.username else ""
             await update.message.reply_text(
-                f"📡 <b>𝔾𝕠𝕣𝕕𝕠's Broadcaster</b>\n\n"
-                f"✅ Logged in as <b>{me.first_name}</b>"
-                f"{' @' + me.username if me.username else ''}\n"
-                f"Use the panel below to control broadcasts.",
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"  ⚡ <b>𝔾𝕠𝕣𝕕𝕠 BROADCASTER</b> ⚡\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"✅ <b>{me.first_name}</b>{username_str}\n\n"
+                f"────────────────────────────\n\n"
+                f"🎛 <b>Control Panel</b>\n"
+                f"<i>Manage your broadcasts below.</i>",
                 parse_mode="HTML",
                 reply_markup=_bcast_main_kb(),
             )
@@ -3437,10 +3439,13 @@ async def bot_broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         phone_code_hash = await _broadcaster.send_code(phone)
         context.user_data["bcast_phone_code_hash"] = phone_code_hash
         await update.message.reply_text(
-            "📲 <b>Authentication Required</b>\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"  🔐 <b>AUTHENTICATION</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"A login code was sent to <code>{phone}</code>.\n\n"
-            "📩 <b>Type the code here</b> (e.g. <code>12345</code>)\n\n"
-            "Send /cancel to abort.",
+            f"📩 <b>Type the code here</b>\n"
+            f"<i>(e.g. <code>12345</code>)</i>\n\n"
+            f"Send /cancel to abort.",
             parse_mode="HTML",
         )
         return _BCAST_AUTH_CODE
@@ -3448,7 +3453,10 @@ async def bot_broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error("Broadcaster auth error: %s", e)
         await update.message.reply_text(
-            f"❌ Connection error: <code>{e}</code>", parse_mode="HTML"
+            f"❌ <b>Connection error</b>\n\n"
+            f"<code>{e}</code>\n\n"
+            f"<i>Try again with /bot</i>",
+            parse_mode="HTML",
         )
         return ConversationHandler.END
 
@@ -3480,12 +3488,16 @@ async def bcast_got_api_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["bcast_setup_api_id"] = api_id
     await context.bot.send_message(
         update.effective_chat.id,
-        "✅ API ID saved.\n\n"
-        "<b>Step 2/3 — API Hash</b>\n"
-        "Back on <a href='https://my.telegram.org'>my.telegram.org</a>, "
-        "copy your <b>App api_hash</b>.\n\n"
-        "Send it here (e.g. <code>a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4</code>)\n\n"
-        "Send /cancel to abort.",
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"  🔧 <b>SETUP WIZARD</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"✅ API ID saved.\n\n"
+        f"◆ <b>Step 2 of 3 · API Hash</b>\n\n"
+        f"Back on <a href='https://my.telegram.org'>my.telegram.org</a>, "
+        f"copy your <b>App api_hash</b>.\n\n"
+        f"📤 Send it here\n"
+        f"<i>(e.g. <code>a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4</code>)</i>\n\n"
+        f"Send /cancel to abort.",
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
@@ -3513,12 +3525,16 @@ async def bcast_got_api_hash(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data["bcast_setup_api_hash"] = api_hash
     await context.bot.send_message(
         update.effective_chat.id,
-        "✅ API Hash saved.\n\n"
-        "<b>Step 3/3 — Phone Number</b>\n"
-        "Enter the phone number of the Telegram account\n"
-        "that will send the broadcasts.\n\n"
-        "Include the country code (e.g. <code>+11234567890</code>)\n\n"
-        "Send /cancel to abort.",
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"  🔧 <b>SETUP WIZARD</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"✅ API Hash saved.\n\n"
+        f"◆ <b>Step 3 of 3 · Phone Number</b>\n\n"
+        f"Enter the phone number of the Telegram account\n"
+        f"that will send the broadcasts.\n\n"
+        f"📤 Include the country code\n"
+        f"<i>(e.g. <code>+11234567890</code>)</i>\n\n"
+        f"Send /cancel to abort.",
         parse_mode="HTML",
     )
     return _BCAST_SETUP_PHONE
@@ -3576,10 +3592,13 @@ async def bcast_got_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await context.bot.send_message(
             update.effective_chat.id,
-            "📲 <b>Login code sent!</b>\n\n"
-            f"A code was sent to <code>{phone}</code> via Telegram.\n\n"
-            "📩 <b>Type the code here</b> (e.g. <code>12345</code>)\n\n"
-            "Send /cancel to abort.",
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"  🔐 <b>AUTHENTICATION</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"A login code was sent to <code>{phone}</code>.\n\n"
+            f"📩 <b>Type the code here</b>\n"
+            f"<i>(e.g. <code>12345</code>)</i>\n\n"
+            f"Send /cancel to abort.",
             parse_mode="HTML",
         )
         return _BCAST_AUTH_CODE
@@ -3621,8 +3640,13 @@ async def bcast_got_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await _broadcaster.sign_in_2fa(stored_pw)
                     await context.bot.send_message(
                         update.effective_chat.id,
-                        "✅ <b>Authenticated!</b> (2FA auto-completed)\n\n"
-                        "🎛 <b>Broadcaster Control Panel</b>",
+                        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"  ⚡ <b>𝔾𝕠𝕣𝕕𝕠 BROADCASTER</b> ⚡\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                        f"✅ <b>Authenticated</b> <i>(2FA auto-completed)</i>\n\n"
+                        f"────────────────────────────\n\n"
+                        f"🎛 <b>Control Panel</b>\n"
+                        f"<i>Manage your broadcasts below.</i>",
                         parse_mode="HTML",
                         reply_markup=_bcast_main_kb(),
                     )
@@ -3634,11 +3658,14 @@ async def bcast_got_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await context.bot.send_message(
                 update.effective_chat.id,
-                "🔐 <b>Two-Factor Authentication</b>\n\n"
-                "This account has 2FA enabled.\n"
-                "<b>Type your 2FA password:</b>\n\n"
-                "<i>Your message will be deleted immediately for security.</i>\n\n"
-                "Send /cancel to abort.",
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"  🔐 <b>TWO-FACTOR AUTH</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"This account has 2FA enabled.\n\n"
+                f"🔑 <b>Type your 2FA password</b>\n\n"
+                f"<i>Your message will be deleted\n"
+                f"immediately for security.</i>\n\n"
+                f"Send /cancel to abort.",
                 parse_mode="HTML",
             )
             return _BCAST_AUTH_2FA
@@ -3646,8 +3673,14 @@ async def bcast_got_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Authenticated — session auto-saved to credentials file
         await context.bot.send_message(
             update.effective_chat.id,
-            "✅ <b>Authenticated!</b> All credentials saved locally.\n\n"
-            "🎛 <b>Broadcaster Control Panel</b>",
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"  ⚡ <b>𝔾𝕠𝕣𝕕𝕠 BROADCASTER</b> ⚡\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"✅ <b>Authenticated!</b>\n"
+            f"<i>All credentials saved locally.</i>\n\n"
+            f"────────────────────────────\n\n"
+            f"🎛 <b>Control Panel</b>\n"
+            f"<i>Manage your broadcasts below.</i>",
             parse_mode="HTML",
             reply_markup=_bcast_main_kb(),
         )
@@ -3679,11 +3712,16 @@ async def bcast_got_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         await context.bot.send_message(
             update.effective_chat.id,
-            "✅ <b>2FA Authentication Successful!</b>\n"
-            "<i>(Your password message was deleted for security.)</i>\n\n"
-            "All credentials are saved locally. You won't need to\n"
-            "do this again unless the bot is redeployed.\n\n"
-            "🎛 <b>Broadcaster Control Panel</b>",
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"  ⚡ <b>𝔾𝕠𝕣𝕕𝕠 BROADCASTER</b> ⚡\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"✅ <b>2FA Authentication Successful!</b>\n"
+            f"<i>Password message deleted for security.</i>\n\n"
+            f"All credentials saved locally.\n"
+            f"No re-auth needed until redeploy.\n\n"
+            f"────────────────────────────\n\n"
+            f"🎛 <b>Control Panel</b>\n"
+            f"<i>Manage your broadcasts below.</i>",
             parse_mode="HTML",
             reply_markup=_bcast_main_kb(),
         )
@@ -3787,6 +3825,9 @@ async def bcast_add_msg_got_text(update: Update, context: ContextTypes.DEFAULT_T
 
     Preserves ALL Telegram message entities (bold, italic, custom emoji, links…)
     so they are faithfully reproduced when the message is broadcast via Telethon.
+
+    Media files are downloaded locally to avoid 'Forwarded' attribution when
+    Telethon sends them to target groups.
     """
     msg = update.message
 
@@ -3806,9 +3847,33 @@ async def bcast_add_msg_got_text(update: Update, context: ContextTypes.DEFAULT_T
 
     if not text and not media_file_id:
         await msg.reply_text(
-            "⚠️ Please send a text message or a media file (photo, video, GIF, document), or /cancel."
+            "⚠️ Please send a text message or a media file "
+            "(photo, video, GIF, document), or /cancel."
         )
         return _BCAST_ADD_MSG
+
+    # ── Download media to local disk (prevents 'Forwarded' attribution) ──
+    local_media_path: str | None = None
+    if media_file_id:
+        try:
+            media_dir = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "broadcast_media"
+            )
+            os.makedirs(media_dir, exist_ok=True)
+            file_obj = await context.bot.get_file(media_file_id)
+            # Determine extension from Telegram's file path
+            ext = ""
+            if file_obj.file_path:
+                ext = os.path.splitext(file_obj.file_path)[1]
+            if not ext:
+                ext = ".bin"
+            local_filename = f"template_{uuid.uuid4().hex[:12]}{ext}"
+            local_media_path = os.path.join(media_dir, local_filename)
+            await file_obj.download_to_drive(local_media_path)
+            logger.info("Media saved locally: %s", local_media_path)
+        except Exception as dl_err:
+            logger.warning("Could not download media locally: %s (falling back to file_id)", dl_err)
+            local_media_path = media_file_id  # Fallback to Bot API file_id
 
     # ── Serialize all message entities (for faithful reproduction via Telethon) ──
     raw_entities = msg.entities or msg.caption_entities or []
@@ -3830,11 +3895,16 @@ async def bcast_add_msg_got_text(update: Update, context: ContextTypes.DEFAULT_T
 
     custom_emoji_count = sum(1 for e in serialized_entities if e.get("type") == "custom_emoji")
 
-    _broadcaster.add_template(text, media=media_file_id, entities=serialized_entities or None)
+    _broadcaster.add_template(
+        text, media=local_media_path, entities=serialized_entities or None
+    )
     idx = len(_broadcaster.config.messages) - 1
 
-    media_note = " + media 🖼" if media_file_id else ""
-    emoji_note = f" + {custom_emoji_count} Premium emoji{'s' if custom_emoji_count != 1 else ''} ✨" if custom_emoji_count else ""
+    media_note = " + media 🖼" if local_media_path else ""
+    emoji_note = (
+        f" + {custom_emoji_count} Premium emoji{'s' if custom_emoji_count != 1 else ''} ✨"
+        if custom_emoji_count else ""
+    )
     caption = f"✅ <b>Template #{idx + 1} added{media_note}{emoji_note}!</b>"
     if text:
         caption += f"\n\n<i>{text[:200]}</i>"
@@ -3988,7 +4058,10 @@ async def bcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Navigate to main panel ──
     if action in ("bcast_main", "bcast_status"):
         await query.edit_message_text(
-            "🎛 <b>Broadcaster Control Panel</b>\n\n" + _broadcaster.get_status_text(),
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"  ⚡ <b>𝔾𝕠𝕣𝕕𝕠 BROADCASTER</b> ⚡\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            + _broadcaster.get_status_text(),
             parse_mode="HTML",
             reply_markup=_bcast_main_kb(),
         )
@@ -3997,13 +4070,14 @@ async def bcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "bcast_start":
         if _broadcaster.is_running:
             await query.edit_message_text(
-                "⚠️ Already running.\n\n" + _broadcaster.get_status_text(),
+                "⚠️ <b>Already running.</b>\n\n" + _broadcaster.get_status_text(),
                 parse_mode="HTML", reply_markup=_bcast_main_kb(),
             )
             return
         if not await _broadcaster.is_authenticated():
             await query.edit_message_text(
-                "⚠️ Not authenticated. Use /bot to log in first.",
+                "⚠️ <b>Not authenticated.</b>\n\n"
+                "<i>Use /bot to log in first.</i>",
                 parse_mode="HTML",
             )
             return
@@ -4015,7 +4089,10 @@ async def bcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         result = await _broadcaster.start_broadcast(progress_callback=_progress)
         await query.edit_message_text(
-            result + "\n\nProgress updates will appear below.",
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"  🚀 <b>BROADCAST STARTED</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"<i>Progress updates will appear below.</i>",
             parse_mode="HTML",
             reply_markup=_bcast_main_kb(),
         )
@@ -4024,7 +4101,7 @@ async def bcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "bcast_stop":
         result = await _broadcaster.stop_broadcast()
         await query.edit_message_text(
-            result + "\n\n" + _broadcaster.get_status_text(),
+            f"⏹️ <b>Broadcast stopped.</b>\n\n" + _broadcaster.get_status_text(),
             parse_mode="HTML", reply_markup=_bcast_main_kb(),
         )
 
@@ -4032,7 +4109,7 @@ async def bcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "bcast_pause":
         result = _broadcaster.pause_broadcast()
         await query.edit_message_text(
-            result + "\n\n" + _broadcaster.get_status_text(),
+            f"⏸ <b>Broadcast paused.</b>\n\n" + _broadcaster.get_status_text(),
             parse_mode="HTML", reply_markup=_bcast_main_kb(),
         )
 
@@ -4040,7 +4117,7 @@ async def bcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "bcast_resume":
         result = _broadcaster.resume_broadcast()
         await query.edit_message_text(
-            result + "\n\n" + _broadcaster.get_status_text(),
+            f"▶️ <b>Broadcast resumed.</b>\n\n" + _broadcaster.get_status_text(),
             parse_mode="HTML", reply_markup=_bcast_main_kb(),
         )
 
@@ -4048,7 +4125,7 @@ async def bcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "bcast_reload":
         cfg.reload()
         await query.edit_message_text(
-            "🔄 <b>Config reloaded from file!</b>\n\n" + _broadcaster.get_config_text(),
+            f"🔄 <b>Config reloaded!</b>\n\n" + _broadcaster.get_config_text(),
             parse_mode="HTML", reply_markup=_bcast_main_kb(),
         )
 
@@ -4058,9 +4135,11 @@ async def bcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif action == "bcast_settings":
         await query.edit_message_text(
-            "⚙️ <b>Broadcaster Settings</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"  ⚙️ <b>SETTINGS</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             + _broadcaster.get_config_text()
-            + "\n\n<i>Tap a button to edit that setting.</i>",
+            + "\n\n<i>Tap a button to edit a setting.</i>",
             parse_mode="HTML",
             reply_markup=_bcast_settings_kb(),
         )
@@ -4152,12 +4231,15 @@ async def bcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif action == "bcast_add_msg":
         await query.edit_message_text(
-            "➕ <b>Add Message Template</b>\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"  ➕ <b>ADD TEMPLATE</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             "Send the message you want to broadcast.\n\n"
-            "📝 <b>Text only</b> \u2014 just type your message\n"
-            "🖼 <b>Photo / GIF / Video</b> \u2014 send the media with a caption\n"
-            "📤 <b>File</b> \u2014 send any file with a caption\n\n"
-            "Supports Telegram formatting (bold, italic, links, etc.)\n\n"
+            "├ 📝 <b>Text</b> — just type your message\n"
+            "├ 🖼 <b>Photo / GIF / Video</b> — with caption\n"
+            "└ 📄 <b>File</b> — any file with caption\n\n"
+            "<i>Supports formatting, links, and\n"
+            "Premium emoji (✨ Telegram Premium).</i>\n\n"
             "Send /cancel to abort.",
             parse_mode="HTML",
             reply_markup=_bcast_cancel_kb(),
@@ -4216,7 +4298,9 @@ async def bcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("bcast_awaiting_add_msg", None)
         context.user_data.pop("bcast_awaiting_exception", None)
         await query.edit_message_text(
-            "❌ Cancelled.\n\n🎛 <b>Broadcaster Control Panel</b>\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"  ⚡ <b>𝔾𝕠𝕣𝕕𝕠 BROADCASTER</b> ⚡\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             + _broadcaster.get_status_text(),
             parse_mode="HTML",
             reply_markup=_bcast_main_kb(),
