@@ -83,7 +83,7 @@ class BroadcasterConfig:
     ])
 
     # Timing
-    delay_minutes: float = 2.0
+    delay_minutes: float = 30.0
     delay_variance: float = 0.3    # ±30% randomization
 
     # Rate limiting
@@ -156,9 +156,9 @@ class SessionManager:
 
     All data is stored in broadcaster_credentials.json:
       {
-        "api_id":  39767938,
-        "api_hash": "21ae63ca...",
-        "phone":   "+529811815398",
+        "api_id":  12345678,
+        "api_hash": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+        "phone":   "+11234567890",
         "session": "<telethon_session_string>",
         "2fa_password": "<optional, stored for auto-reauth>"
       }
@@ -415,13 +415,17 @@ class Broadcaster:
 
     # ── Client Lifecycle ─────────────────────────────────────────────────
 
-    def _create_client(self, api_id=None, api_hash=None) -> TelegramClient:
+    def _create_client(self, api_id=None, api_hash=None, session: str | None = None) -> TelegramClient:
         """Create a TelegramClient with StringSession for portability.
 
         Credential resolution order:
           1. Explicit parameters (used by setup wizard on first run)
           2. Credentials file (broadcaster_credentials.json — persistent)
           3. Environment variables (legacy fallback)
+
+        The optional `session` parameter lets the setup wizard pass an empty
+        string explicitly, bypassing any stale TG_SESSION env var that would
+        cause Telethon's 'Not a valid string' error.
         """
         if not api_id or not api_hash:
             creds = SessionManager.load()
@@ -432,7 +436,9 @@ class Broadcaster:
                 "Telegram API credentials not found. "
                 "Run /bot to start the setup wizard."
             )
-        session_str = SessionManager.load_session()
+        # If session was explicitly passed (including empty string), use it directly.
+        # Otherwise, load from credentials file / env var (normal restart path).
+        session_str = session if session is not None else SessionManager.load_session()
         self.client = TelegramClient(
             StringSession(session_str),
             int(api_id),
@@ -701,98 +707,213 @@ class Broadcaster:
         return not self._stop_event.is_set()
 
     async def _broadcast_loop(self, progress_callback=None):
-        """Core broadcast loop with all anti-ban protections.
+        """Core broadcast loop — round-based model.
 
-        1. Discover target groups
-        2. For each group:
-           a. Check stop signal
-           b. Handle pause (waits here until resumed)
-           c. Check per-hour rate limit
-           d. Calculate & wait randomized delay (with warmup)
-           e. Pick next enabled message template (with variation)
-           f. Send — catch FloodWait, permission errors, network errors
-           g. Log everything to audit trail
+        Each ROUND:
+          1. Discover target groups
+          2. For each message template (enabled only):
+             a. Send it to ALL target groups back-to-back
+             b. Wait 60 seconds before the next template
+          3. Wait delay_minutes (±variance) before the next round
+          4. Repeat indefinitely until stopped
+
+        Anti-ban protections: FloodWait handling, per-hour cap, warmup slow-start.
         """
         try:
-            # ── 1. Discover targets ──
-            targets = await self.get_all_targets()
-            if not targets:
-                AuditLogger.log("broadcast_abort", details="No targets found.")
-                if progress_callback:
-                    await progress_callback("⚠️ No target groups found. Check your config.")
-                return
+            round_num = 0
 
-            active_msgs = [i for i in range(len(self.config.messages)) if i not in self._disabled_templates]
-            if not active_msgs:
-                if progress_callback:
-                    await progress_callback("⚠️ All message templates are disabled. Enable at least one.")
-                return
-
-            msg_engine = MessageEngine(self.config.messages, self._disabled_templates.copy())
-            total = len(targets)
-            base_delay_secs = self.config.delay_minutes * 60
-            send_count = 0
-
-            self.stats["total_targets"] = total
-
-            if progress_callback:
-                await progress_callback(
-                    f"📡 <b>Broadcast started</b>\n\n"
-                    f"🎯 Targets: <b>{total} groups</b>\n"
-                    f"📝 Templates: <b>{msg_engine.active_count}/{msg_engine.total_count} active</b>\n"
-                    f"⏱ Delay: <b>~{self.config.delay_minutes}min ±{int(self.config.delay_variance * 100)}%</b>\n"
-                    f"🛡 Warmup: <b>first {self.config.warmup_count} msgs at 2× delay</b>\n"
-                    f"📊 Cap: <b>{self.config.max_per_hour}/hour</b>"
-                )
-
-            # ── 2. Send loop ──
-            for i, group in enumerate(targets):
+            while True:
                 if self._stop_event.is_set():
                     break
 
-                # ── 2a. Pause handling ──
-                if self._pause_event.is_set():
+                # ── Reload config & discover targets each round ──
+                self.config.reload()
+                self._rate_limiter = RateLimiter(self.config.max_per_hour)
+
+                targets = await self.get_all_targets()
+                if not targets:
+                    AuditLogger.log("broadcast_abort", details="No targets found.")
                     if progress_callback:
-                        await progress_callback(f"⏸ Broadcast paused at group {i+1}/{total}.")
-                    while self._pause_event.is_set():
-                        if self._stop_event.is_set():
-                            break
-                        await asyncio.sleep(1.0)
+                        await progress_callback("⚠️ No target groups found. Check your config.")
+                    return
+
+                active_indices = [i for i in range(len(self.config.messages))
+                                  if i not in self._disabled_templates]
+                if not active_indices:
+                    if progress_callback:
+                        await progress_callback("⚠️ All message templates are disabled. Enable at least one.")
+                    return
+
+                round_num += 1
+                total_groups = len(targets)
+                total_templates = len(active_indices)
+                self.stats["total_targets"] = total_groups
+
+                if progress_callback:
+                    await progress_callback(
+                        f"📡 <b>Round {round_num} started</b>\n\n"
+                        f"🎯 Groups: <b>{total_groups}</b>\n"
+                        f"📝 Messages this round: <b>{total_templates}</b>\n"
+                        f"⏱ Round interval: <b>~{self.config.delay_minutes} min</b>"
+                    )
+
+                # ── Send each template to all groups ──
+                for tmpl_num, tmpl_idx in enumerate(active_indices):
                     if self._stop_event.is_set():
                         break
-                    if progress_callback:
-                        await progress_callback(f"▶️ Broadcast resumed at group {i+1}/{total}.")
 
-                chat_id = group["id"]
-                chat_title = group["title"]
-                self.stats["current_group"] = chat_title
-                self.stats["current_index"] = i + 1
+                    # ── Pause handling ──
+                    if self._pause_event.is_set():
+                        if progress_callback:
+                            await progress_callback(
+                                f"⏸ Paused before message {tmpl_num + 1}/{total_templates} "
+                                f"in round {round_num}."
+                            )
+                        while self._pause_event.is_set():
+                            if self._stop_event.is_set():
+                                break
+                            await asyncio.sleep(1.0)
+                        if self._stop_event.is_set():
+                            break
+                        if progress_callback:
+                            await progress_callback(f"▶️ Resumed round {round_num}.")
 
-                # ── 2b. Rate limit check ──
-                if not self._rate_limiter.can_send():
-                    wait_time = self._rate_limiter.seconds_until_available()
-                    logger.info("Rate limit reached. Waiting %.0fs.", wait_time)
-                    AuditLogger.log("rate_limit_wait", chat_id=chat_id, status="waiting",
-                                    details=f"Waiting {wait_time:.0f}s.")
-                    if progress_callback:
-                        await progress_callback(
-                            f"⏳ Rate limit reached ({self.config.max_per_hour}/hr). "
-                            f"Waiting {wait_time:.0f}s..."
-                        )
-                    if not await self._interruptible_sleep(wait_time):
+                    template = self.config.messages[tmpl_idx]
+                    msg_text = MessageEngine([template])._randomize_text(template.get("text", ""))
+                    msg_media = template.get("media")
+
+                    self.stats["current_index"] = tmpl_num + 1
+
+                    # ── Send this template to every target group ──
+                    for group in targets:
+                        if self._stop_event.is_set():
+                            break
+
+                        chat_id = group["id"]
+                        chat_title = group["title"]
+                        self.stats["current_group"] = chat_title
+
+                        # Rate limit check
+                        if not self._rate_limiter.can_send():
+                            wait_time = self._rate_limiter.seconds_until_available()
+                            logger.info("Rate limit reached. Waiting %.0fs.", wait_time)
+                            AuditLogger.log("rate_limit_wait", chat_id=chat_id, status="waiting",
+                                            details=f"Waiting {wait_time:.0f}s.")
+                            if progress_callback:
+                                await progress_callback(
+                                    f"⏳ Safety cap reached ({self.config.max_per_hour}/hr). "
+                                    f"Waiting {wait_time:.0f}s..."
+                                )
+                            if not await self._interruptible_sleep(wait_time):
+                                break
+
+                        try:
+                            if msg_media:
+                                await self.client.send_file(chat_id, msg_media, caption=msg_text)
+                            else:
+                                await self.client.send_message(chat_id, msg_text)
+
+                            self.stats["sent"] += 1
+                            self._rate_limiter.record_send()
+                            AuditLogger.log("send_success", chat_id=chat_id, chat_title=chat_title,
+                                            status="ok",
+                                            details=f"Round {round_num}, msg {tmpl_num+1}/{total_templates}.")
+                            logger.info("[R%d M%d] ✅ Sent to '%s'", round_num, tmpl_num+1, chat_title)
+
+                        except errors.FloodWaitError as e:
+                            self.stats["flood_waits"] += 1
+                            buffer = random.randint(self.config.flood_wait_buffer_min,
+                                                   self.config.flood_wait_buffer_max)
+                            total_wait = e.seconds + buffer
+                            AuditLogger.log("flood_wait", chat_id=chat_id, chat_title=chat_title,
+                                            status="paused",
+                                            details=f"FloodWait {e.seconds}s + {buffer}s buffer.")
+                            if progress_callback:
+                                await progress_callback(
+                                    f"⚠️ <b>Telegram slow-down!</b> Waiting {total_wait}s..."
+                                )
+                            if not await self._interruptible_sleep(total_wait):
+                                break
+                            # Retry
+                            try:
+                                if msg_media:
+                                    await self.client.send_file(chat_id, msg_media, caption=msg_text)
+                                else:
+                                    await self.client.send_message(chat_id, msg_text)
+                                self.stats["sent"] += 1
+                                self._rate_limiter.record_send()
+                            except Exception as retry_err:
+                                self.stats["failed"] += 1
+                                AuditLogger.log("send_fail_retry", chat_id=chat_id, status="error",
+                                                details=str(retry_err))
+
+                        except (errors.ChatWriteForbiddenError, errors.UserBannedInChannelError,
+                                errors.ChatAdminRequiredError):
+                            self.stats["skipped"] += 1
+                            AuditLogger.log("send_skip", chat_id=chat_id, chat_title=chat_title,
+                                            status="skipped", details="No write permission.")
+
+                        except errors.SlowModeWaitError as e:
+                            self.stats["skipped"] += 1
+                            AuditLogger.log("send_skip", chat_id=chat_id, chat_title=chat_title,
+                                            status="skipped", details=f"Slow mode ({e.seconds}s).")
+
+                        except (ConnectionError, OSError) as e:
+                            self.stats["failed"] += 1
+                            AuditLogger.log("send_fail", chat_id=chat_id, status="error",
+                                            details=f"Network error: {e}")
+                            await asyncio.sleep(10)
+
+                        except Exception as e:
+                            self.stats["failed"] += 1
+                            AuditLogger.log("send_fail", chat_id=chat_id, chat_title=chat_title,
+                                            status="error", details=str(e))
+                            logger.error("[R%d] ❌ Failed to send to '%s': %s", round_num, chat_title, e)
+
+                    if self._stop_event.is_set():
                         break
 
-                # ── 2c. Randomized delay (with warmup) ──
-                # ANTI-BAN: No delay before the FIRST message.
-                # All subsequent messages get base_delay ± variance%.
-                # First warmup_count messages use 2× delay to ease in.
-                if send_count > 0:
-                    delay = base_delay_secs
-                    variance = delay * self.config.delay_variance
-                    randomized_delay = delay + random.uniform(-variance, variance)
-                    if send_count < self.config.warmup_count:
-                        randomized_delay *= 2.0  # WARMUP: 2× delay for first N sends
-                    randomized_delay = max(randomized_delay, 10.0)  # Hard minimum 10s
+                    # ── 1-minute gap between templates (not after the last one) ──
+                    if tmpl_num < total_templates - 1:
+                        if progress_callback:
+                            await progress_callback(
+                                f"⏳ Message {tmpl_num+1}/{total_templates} sent. "
+                                f"Waiting 1 min before next message..."
+                            )
+                        if not await self._interruptible_sleep(60):
+                            break
+
+                if self._stop_event.is_set():
+                    break
+
+                # ── Progress after completing this round ──
+                if progress_callback and self.stats["sent"] % 5 == 0 and self.stats["sent"] > 0:
+                    await progress_callback(
+                        f"📊 Round {round_num} done\n"
+                        f"✅ Sent: <b>{self.stats['sent']}</b>  "
+                        f"❌ Failed: {self.stats['failed']}  "
+                        f"⏭ Skipped: {self.stats['skipped']}"
+                    )
+
+                # ── Wait delay_minutes ± variance before next round ──
+                base_delay_secs = self.config.delay_minutes * 60
+                variance = base_delay_secs * self.config.delay_variance
+                randomized_delay = base_delay_secs + random.uniform(-variance, variance)
+                # Apply warmup: first N rounds use 2× delay
+                if round_num < self.config.warmup_count:
+                    randomized_delay *= 2.0
+                randomized_delay = max(randomized_delay, 60.0)  # minimum 60s between rounds
+
+                wait_mins = round(randomized_delay / 60, 1)
+                if progress_callback:
+                    await progress_callback(
+                        f"💤 All {total_templates} message(s) sent this round.\n"
+                        f"Next round in <b>~{wait_mins} min</b>."
+                    )
+                AuditLogger.log("round_complete", details=f"Round {round_num} done. Next in {wait_mins}min.")
+
+                if not await self._interruptible_sleep(randomized_delay):
+                    break
 
                     logger.info("Waiting %.1fs before next send...", randomized_delay)
                     if not await self._interruptible_sleep(randomized_delay):
@@ -970,9 +1091,13 @@ class Broadcaster:
         folders = ", ".join(self.config.target_folders) if self.config.target_folders else "<i>None</i>"
         excepts = str(len(self.config.exceptions)) + " group(s)" if self.config.exceptions else "<i>None</i>"
         active = len(self.config.messages) - len(self._disabled_templates)
+        active_msgs = [m for i, m in enumerate(self.config.messages) if i not in self._disabled_templates]
+        template_gap_note = (
+            f" ({len(active_msgs)} msgs × 1 min gap = ~{len(active_msgs)} min per round)"
+            if len(active_msgs) > 1 else ""
+        )
 
         return (
-            f"⚙️ <b>Broadcaster Settings</b>\n"
             f"{'━' * 28}\n\n"
             f"🎯 <b>Targets:</b>\n"
             f"  {'✅' if self.config.include_archived else '❌'} Archived groups\n"
@@ -980,11 +1105,16 @@ class Broadcaster:
             f"  🚫 Exceptions: {excepts}\n\n"
             f"📝 <b>Templates:</b> {active}/{len(self.config.messages)} active\n\n"
             f"⏱ <b>Timing:</b>\n"
-            f"  Delay: <code>{self.config.delay_minutes} min</code>\n"
-            f"  Variance: <code>±{int(self.config.delay_variance * 100)}%</code>\n"
-            f"  Cap: <code>{self.config.max_per_hour}/hour</code>\n"
-            f"  Warmup: <code>{self.config.warmup_count} msgs at 2×</code>\n\n"
-            f"🛡 <b>FloodWait buffer:</b> {self.config.flood_wait_buffer_min}–{self.config.flood_wait_buffer_max}s"
+            f"  🔁 <b>Round delay:</b> <code>{self.config.delay_minutes} min</code>\n"
+            f"  <i>Wait between rounds (after all messages are sent)</i>\n\n"
+            f"  🎲 <b>Variance:</b> <code>±{int(self.config.delay_variance * 100)}%</code>\n"
+            f"  <i>Random ±% added to the round delay to look less robotic</i>\n\n"
+            f"  📊 <b>Safety cap:</b> <code>{self.config.max_per_hour}/hour</code>\n"
+            f"  <i>Max messages per hour — pauses automatically if exceeded</i>\n\n"
+            f"  🌡 <b>Warmup:</b> <code>{self.config.warmup_count} rounds at 2× delay</code>\n"
+            f"  <i>First {self.config.warmup_count} rounds are slower to avoid spam detection</i>\n\n"
+            f"🛡 <b>FloodWait buffer:</b> {self.config.flood_wait_buffer_min}–{self.config.flood_wait_buffer_max}s\n"
+            f"  <i>Extra wait time added on top of Telegram's own slow-down penalty</i>"
         )
 
     def get_templates_text(self) -> str:

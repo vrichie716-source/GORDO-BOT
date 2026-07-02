@@ -3271,6 +3271,7 @@ _BCAST_AUTH_CODE      = 903   # auth: waiting for Telegram login code
 _BCAST_AUTH_2FA       = 904   # auth: waiting for 2FA password
 _BCAST_CFG_VALUE      = 905   # config edit: waiting for new value
 _BCAST_ADD_MSG        = 906   # add template: waiting for message text
+_BCAST_ADD_EXCEPTION  = 907   # exceptions: waiting for group ID/username/link
 
 # Module-level broadcaster instance (shared across all handlers)
 _broadcaster: Broadcaster = Broadcaster()
@@ -3315,14 +3316,30 @@ def _bcast_settings_kb() -> InlineKeyboardMarkup:
     """Settings panel keyboard — shows current values on buttons."""
     cfg = _broadcaster.config
     arch_icon = "✅" if cfg.include_archived else "❌"
+    exc_count = len(cfg.exceptions)
+    exc_label = f"🚫 Exceptions ({exc_count})" if exc_count else "🚫 Exceptions"
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(f"⏱ Delay: {cfg.delay_minutes}min", callback_data="bcast_cfg_delay"),
          InlineKeyboardButton(f"📊 Cap: {cfg.max_per_hour}/hr", callback_data="bcast_cfg_cap")],
         [InlineKeyboardButton(f"🎲 Variance: ±{int(cfg.delay_variance * 100)}%", callback_data="bcast_cfg_variance"),
-         InlineKeyboardButton(f"🛡 Warmup: {cfg.warmup_count}", callback_data="bcast_cfg_warmup")],
+         InlineKeyboardButton(f"🌡 Warmup: {cfg.warmup_count}", callback_data="bcast_cfg_warmup")],
         [InlineKeyboardButton(f"{arch_icon} Archived groups", callback_data="bcast_cfg_toggle_archived")],
+        [InlineKeyboardButton(exc_label, callback_data="bcast_exceptions")],
         [InlineKeyboardButton("◀️ Main Panel", callback_data="bcast_main")],
     ])
+
+
+def _bcast_exceptions_kb() -> InlineKeyboardMarkup:
+    """Exceptions panel keyboard — lists current exceptions with remove buttons."""
+    cfg = _broadcaster.config
+    rows = []
+    for exc_id in cfg.exceptions:
+        rows.append([
+            InlineKeyboardButton(f"🗑 Remove {exc_id}", callback_data=f"bcast_exc_remove_{exc_id}"),
+        ])
+    rows.append([InlineKeyboardButton("➕ Add Exception", callback_data="bcast_exc_add")])
+    rows.append([InlineKeyboardButton("◀️ Settings", callback_data="bcast_settings")])
+    return InlineKeyboardMarkup(rows)
 
 
 def _bcast_messages_kb() -> InlineKeyboardMarkup:
@@ -3388,7 +3405,7 @@ async def bot_broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "<b>Step 1/3 — API ID</b>\n"
             "Go to <a href='https://my.telegram.org'>my.telegram.org</a>, "
             "log in, then copy your <b>App api_id</b>.\n\n"
-            "Send it here (numbers only, e.g. <code>39767938</code>)\n\n"
+            "Send it here (numbers only, e.g. <code>12345678</code>)\n\n"
             "Send /cancel to abort.",
             parse_mode="HTML",
             disable_web_page_preview=True,
@@ -3454,7 +3471,7 @@ async def bcast_got_api_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await context.bot.send_message(
             update.effective_chat.id,
-            "⚠️ API ID must be a positive number (e.g. <code>39767938</code>).\n"
+            "⚠️ API ID must be a positive number (e.g. <code>12345678</code>).\n"
             "Try again, or /cancel.",
             parse_mode="HTML",
         )
@@ -3467,7 +3484,7 @@ async def bcast_got_api_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>Step 2/3 — API Hash</b>\n"
         "Back on <a href='https://my.telegram.org'>my.telegram.org</a>, "
         "copy your <b>App api_hash</b>.\n\n"
-        "Send it here (e.g. <code>21ae63ca03f1cab8c8c70c716b258737</code>)\n\n"
+        "Send it here (e.g. <code>a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4</code>)\n\n"
         "Send /cancel to abort.",
         parse_mode="HTML",
         disable_web_page_preview=True,
@@ -3500,7 +3517,7 @@ async def bcast_got_api_hash(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "<b>Step 3/3 — Phone Number</b>\n"
         "Enter the phone number of the Telegram account\n"
         "that will send the broadcasts.\n\n"
-        "Include the country code (e.g. <code>+529811815398</code>)\n\n"
+        "Include the country code (e.g. <code>+11234567890</code>)\n\n"
         "Send /cancel to abort.",
         parse_mode="HTML",
     )
@@ -3520,7 +3537,7 @@ async def bcast_got_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             update.effective_chat.id,
             "⚠️ Include the country code with <code>+</code> "
-            "(e.g. <code>+529811815398</code>).\n"
+            "(e.g. <code>+11234567890</code>).\n"
             "Try again, or /cancel.",
             parse_mode="HTML",
         )
@@ -3540,8 +3557,11 @@ async def bcast_got_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     try:
-        # Create and connect the Telethon client with the new credentials
-        _broadcaster._create_client(api_id=api_id, api_hash=api_hash)
+        # Create and connect the Telethon client with the new credentials.
+        # Pass session="" explicitly so we always start a fresh session during
+        # setup — this prevents any stale TG_SESSION Railway env var from
+        # being passed to StringSession(), which would cause "Not a valid string".
+        _broadcaster._create_client(api_id=api_id, api_hash=api_hash, session="")
         await _broadcaster.connect()
         phone_code_hash = await _broadcaster.send_code(phone)
         context.user_data["bcast_phone_code_hash"] = phone_code_hash
@@ -3763,16 +3783,35 @@ async def bcast_cfg_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── Add message conversation ──────────────────────────────────────────────────
 
 async def bcast_add_msg_got_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Received new message text — add it as a template."""
-    text = (update.message.text or "").strip()
-    if not text:
-        await update.message.reply_text("Please send the message text, or /cancel.")
+    """Received new template — can be text-only OR media with optional caption."""
+    msg = update.message
+
+    # Extract text or caption
+    text = (msg.text or msg.caption or "").strip()
+
+    # Extract media file_id if present
+    media_file_id: str | None = None
+    if msg.photo:
+        media_file_id = msg.photo[-1].file_id   # highest resolution
+    elif msg.video:
+        media_file_id = msg.video.file_id
+    elif msg.animation:   # GIF
+        media_file_id = msg.animation.file_id
+    elif msg.document:
+        media_file_id = msg.document.file_id
+
+    if not text and not media_file_id:
+        await msg.reply_text(
+            "⚠️ Please send a text message or a media file (photo, video, GIF, document), or /cancel."
+        )
         return _BCAST_ADD_MSG
-    _broadcaster.add_template(text)
+
+    _broadcaster.add_template(text, media=media_file_id)
     idx = len(_broadcaster.config.messages) - 1
-    await update.message.reply_text(
-        f"✅ <b>Template #{idx + 1} added!</b>\n\n"
-        f"<i>{text[:200]}</i>",
+    media_note = " + media 🖼" if media_file_id else ""
+    await msg.reply_text(
+        f"✅ <b>Template #{idx + 1} added{media_note}!</b>\n\n"
+        f"<i>{text[:200]}</i>" if text else f"✅ <b>Template #{idx + 1} added{media_note}!</b>",
         parse_mode="HTML",
     )
     await context.bot.send_message(
@@ -3796,7 +3835,115 @@ async def bcast_add_msg_cancel(update: Update, context: ContextTypes.DEFAULT_TYP
     return ConversationHandler.END
 
 
-# ── Main callback dispatcher ──────────────────────────────────────────────────
+# ── Exceptions panel helpers ──────────────────────────────────────────────────
+
+def _exceptions_text() -> str:
+    """Build the Exceptions panel display text."""
+    cfg = _broadcaster.config
+    if not cfg.exceptions:
+        lines = [
+            "🚫 <b>Exceptions</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "<i>No exceptions set.</i>\n\n"
+            "Groups in this list will be <b>skipped</b> during broadcasting,\n"
+            "even if they appear in your archived groups or folders.\n\n"
+            "Tap <b>➕ Add Exception</b> and send a group username, link, or numeric ID."
+        ]
+        return "".join(lines)
+    lines = [
+        f"🚫 <b>Exceptions ({len(cfg.exceptions)} groups)</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "These groups will be <b>skipped</b> during broadcasting:\n\n"
+    ]
+    for exc_id in cfg.exceptions:
+        lines.append(f"  • <code>{exc_id}</code>\n")
+    lines.append("\nTap <b>🗑 Remove</b> next to a group to unblock it.")
+    return "".join(lines)
+
+
+async def bcast_got_exception(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Received a group identifier to add to exceptions.
+    Accepts: numeric ID, @username, t.me/username, or t.me/joinchat/... links.
+    """
+    raw = (update.message.text or "").strip()
+    cfg = _broadcaster.config
+
+    # ── Parse the input into a numeric group ID ──
+    group_id: int | None = None
+
+    # 1. Direct numeric ID (e.g. -1001234567890 or 1234567890)
+    try:
+        group_id = int(raw.replace(" ", ""))
+    except ValueError:
+        pass
+
+    # 2. @username or t.me/username — resolve via Telethon
+    if group_id is None:
+        # Strip URL prefix
+        username = raw
+        for prefix in ("https://t.me/", "http://t.me/", "t.me/", "@"):
+            if username.lower().startswith(prefix):
+                username = username[len(prefix):]
+                break
+        # Skip joinchat links (can't resolve without joining)
+        if username.startswith("joinchat/") or username.startswith("+"):
+            await update.message.reply_text(
+                "⚠️ Join-links cannot be resolved. Please use the group's numeric ID instead.\n\n"
+                "You can get the ID with /chatid while in the group.",
+                parse_mode="HTML",
+            )
+            return _BCAST_ADD_EXCEPTION
+
+        # Try to resolve via Telethon client
+        username = username.lstrip("@").strip()
+        if username:
+            try:
+                if _broadcaster.client and _broadcaster.client.is_connected():
+                    entity = await _broadcaster.client.get_entity(username)
+                    group_id = entity.id
+                    # Telethon returns positive IDs for supergroups; make negative
+                    if group_id > 0:
+                        group_id = -group_id
+            except Exception as resolve_err:
+                logger.warning("Could not resolve '%s': %s", username, resolve_err)
+
+    if group_id is None:
+        await update.message.reply_text(
+            "⚠️ Couldn't recognise that. Please send:\n"
+            "• A numeric group ID (e.g. <code>-1001234567890</code>)\n"
+            "• A username (e.g. <code>@mygroup</code> or <code>mygroup</code>)\n"
+            "• A t.me link (e.g. <code>https://t.me/mygroup</code>)\n\n"
+            "Or send /cancel to abort.",
+            parse_mode="HTML",
+        )
+        return _BCAST_ADD_EXCEPTION
+
+    # ── Add to exceptions list ──
+    if group_id in cfg.exceptions:
+        await update.message.reply_text(
+            f"ℹ️ <code>{group_id}</code> is already in the exceptions list.",
+            parse_mode="HTML",
+        )
+    else:
+        cfg.exceptions.append(group_id)
+        cfg.save()
+        await update.message.reply_text(
+            f"✅ <b>Added to exceptions:</b> <code>{group_id}</code>\n\n"
+            "This group will be skipped during broadcasts.",
+            parse_mode="HTML",
+        )
+
+    context.user_data.pop("bcast_awaiting_exception", None)
+    await context.bot.send_message(
+        update.effective_chat.id,
+        _exceptions_text(),
+        parse_mode="HTML",
+        reply_markup=_bcast_exceptions_kb(),
+    )
+    return ConversationHandler.END
+
+
+
 
 async def bcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Dispatch all bcast_* callback queries to the appropriate panel."""
@@ -3884,7 +4031,7 @@ async def bcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif action == "bcast_settings":
         await query.edit_message_text(
-            "⚙️ <b>Broadcaster Settings</b>\n\n"
+            "⚙️ <b>Broadcaster Settings</b>\n"
             + _broadcaster.get_config_text()
             + "\n\n<i>Tap a button to edit that setting.</i>",
             parse_mode="HTML",
@@ -3923,6 +4070,49 @@ async def bcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["bcast_awaiting_cfg"] = True
 
     # ────────────────────────────────────────────────
+    # EXCEPTIONS PANEL
+    # ────────────────────────────────────────────────
+
+    elif action == "bcast_exceptions":
+        await query.edit_message_text(
+            _exceptions_text(),
+            parse_mode="HTML",
+            reply_markup=_bcast_exceptions_kb(),
+        )
+
+    elif action == "bcast_exc_add":
+        await query.edit_message_text(
+            "🚫 <b>Add Exception</b>\n\n"
+            "Send the group's username, link, or numeric ID.\n\n"
+            "Examples:\n"
+            "  • <code>@mygroupname</code>\n"
+            "  • <code>https://t.me/mygroupname</code>\n"
+            "  • <code>-1001234567890</code> (numeric ID)\n\n"
+            "💡 Tip: use /chatid inside a group to get its numeric ID.\n\n"
+            "Send /cancel to abort.",
+            parse_mode="HTML",
+            reply_markup=_bcast_cancel_kb(),
+        )
+        context.user_data["bcast_awaiting_exception"] = True
+
+    elif action.startswith("bcast_exc_remove_"):
+        try:
+            exc_id = int(action.split("bcast_exc_remove_")[1])
+            if exc_id in cfg.exceptions:
+                cfg.exceptions.remove(exc_id)
+                cfg.save()
+                note = f"✅ <b>Removed:</b> <code>{exc_id}</code> from exceptions."
+            else:
+                note = f"ℹ️ <code>{exc_id}</code> was not in the exceptions list."
+        except (ValueError, IndexError):
+            note = "⚠️ Could not parse exception ID."
+        await query.edit_message_text(
+            note + "\n\n" + _exceptions_text(),
+            parse_mode="HTML",
+            reply_markup=_bcast_exceptions_kb(),
+        )
+
+    # ────────────────────────────────────────────────
     # MESSAGES PANEL
     # ────────────────────────────────────────────────
 
@@ -3936,7 +4126,10 @@ async def bcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "bcast_add_msg":
         await query.edit_message_text(
             "➕ <b>Add Message Template</b>\n\n"
-            "Send the message text you want to broadcast.\n"
+            "Send the message you want to broadcast.\n\n"
+            "📝 <b>Text only</b> \u2014 just type your message\n"
+            "🖼 <b>Photo / GIF / Video</b> \u2014 send the media with a caption\n"
+            "📤 <b>File</b> \u2014 send any file with a caption\n\n"
             "Supports Telegram formatting (bold, italic, links, etc.)\n\n"
             "Send /cancel to abort.",
             parse_mode="HTML",
@@ -3994,6 +4187,7 @@ async def bcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("bcast_cfg_field", None)
         context.user_data.pop("bcast_awaiting_cfg", None)
         context.user_data.pop("bcast_awaiting_add_msg", None)
+        context.user_data.pop("bcast_awaiting_exception", None)
         await query.edit_message_text(
             "❌ Cancelled.\n\n🎛 <b>Broadcaster Control Panel</b>\n\n"
             + _broadcaster.get_status_text(),
@@ -4024,10 +4218,16 @@ async def bcast_inline_text_handler(update: Update, context: ContextTypes.DEFAUL
         await bcast_cfg_got_value(update, context)
         return
 
-    # ── Add message text ──
+    # ── Add message (text or media) ──
     if context.user_data.get("bcast_awaiting_add_msg"):
         context.user_data.pop("bcast_awaiting_add_msg", None)
         await bcast_add_msg_got_text(update, context)
+        return
+
+    # ── Add exception ──
+    if context.user_data.get("bcast_awaiting_exception"):
+        context.user_data.pop("bcast_awaiting_exception", None)
+        await bcast_got_exception(update, context)
         return
 
 
@@ -8236,19 +8436,28 @@ def main():
                 filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
                 bcast_cfg_got_value,
             )],
-            # Add message template
+            # Add message template (text OR media with optional caption)
             _BCAST_ADD_MSG: [MessageHandler(
-                filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
+                (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.ANIMATION | filters.Document.ALL)
+                & ~filters.COMMAND
+                & filters.ChatType.PRIVATE,
                 bcast_add_msg_got_text,
+            )],
+            # Add exception: waiting for group ID / username / link
+            _BCAST_ADD_EXCEPTION: [MessageHandler(
+                filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
+                bcast_got_exception,
             )],
         },
         fallbacks=[CommandHandler("cancel", bcast_auth_cancel)],
         per_user=True, per_chat=True,
     ))
     app.add_handler(CallbackQueryHandler(bcast_callback, pattern=r"^bcast_"))
-    # Fallback handler for config edits triggered via inline button (user_data flag)
+    # Fallback handler for config edits & add-media triggered via inline button (user_data flag)
     app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
+        (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.ANIMATION | filters.Document.ALL)
+        & ~filters.COMMAND
+        & filters.ChatType.PRIVATE,
         bcast_inline_text_handler,
     ), group=1)
 
