@@ -3783,7 +3783,11 @@ async def bcast_cfg_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── Add message conversation ──────────────────────────────────────────────────
 
 async def bcast_add_msg_got_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Received new template — can be text-only OR media with optional caption."""
+    """Received new template — can be text-only OR media with optional caption.
+
+    Preserves ALL Telegram message entities (bold, italic, custom emoji, links…)
+    so they are faithfully reproduced when the message is broadcast via Telethon.
+    """
     msg = update.message
 
     # Extract text or caption
@@ -3806,14 +3810,36 @@ async def bcast_add_msg_got_text(update: Update, context: ContextTypes.DEFAULT_T
         )
         return _BCAST_ADD_MSG
 
-    _broadcaster.add_template(text, media=media_file_id)
+    # ── Serialize all message entities (for faithful reproduction via Telethon) ──
+    raw_entities = msg.entities or msg.caption_entities or []
+    serialized_entities: list[dict] = []
+    for ent in raw_entities:
+        d: dict = {
+            "type":   ent.type.value if hasattr(ent.type, "value") else str(ent.type),
+            "offset": ent.offset,
+            "length": ent.length,
+        }
+        # Extra fields per entity type
+        if ent.type.value == "custom_emoji" and ent.custom_emoji_id:
+            d["custom_emoji_id"] = ent.custom_emoji_id
+        elif ent.type.value == "text_link" and ent.url:
+            d["url"] = ent.url
+        elif ent.type.value == "pre" and ent.language:
+            d["language"] = ent.language
+        serialized_entities.append(d)
+
+    custom_emoji_count = sum(1 for e in serialized_entities if e.get("type") == "custom_emoji")
+
+    _broadcaster.add_template(text, media=media_file_id, entities=serialized_entities or None)
     idx = len(_broadcaster.config.messages) - 1
+
     media_note = " + media 🖼" if media_file_id else ""
-    await msg.reply_text(
-        f"✅ <b>Template #{idx + 1} added{media_note}!</b>\n\n"
-        f"<i>{text[:200]}</i>" if text else f"✅ <b>Template #{idx + 1} added{media_note}!</b>",
-        parse_mode="HTML",
-    )
+    emoji_note = f" + {custom_emoji_count} Premium emoji{'s' if custom_emoji_count != 1 else ''} ✨" if custom_emoji_count else ""
+    caption = f"✅ <b>Template #{idx + 1} added{media_note}{emoji_note}!</b>"
+    if text:
+        caption += f"\n\n<i>{text[:200]}</i>"
+
+    await msg.reply_text(caption, parse_mode="HTML")
     await context.bot.send_message(
         update.effective_chat.id,
         _broadcaster.get_templates_text(),
@@ -3821,6 +3847,7 @@ async def bcast_add_msg_got_text(update: Update, context: ContextTypes.DEFAULT_T
         reply_markup=_bcast_messages_kb(),
     )
     return ConversationHandler.END
+
 
 
 async def bcast_add_msg_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):

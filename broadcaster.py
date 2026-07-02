@@ -52,6 +52,16 @@ from telethon.tl.types import (
     InputPeerChat,
     Channel,
     Chat,
+    # Message formatting entities
+    MessageEntityCustomEmoji,
+    MessageEntityBold,
+    MessageEntityItalic,
+    MessageEntityCode,
+    MessageEntityPre,
+    MessageEntityTextUrl,
+    MessageEntityStrike,
+    MessageEntityUnderline,
+    MessageEntitySpoiler,
 )
 
 logger = logging.getLogger(__name__)
@@ -357,10 +367,18 @@ class MessageEngine:
             }
         return None  # All templates disabled
 
-    def _randomize_text(self, text: str) -> str:
-        """Insert 1-3 invisible chars at random positions to create byte-unique messages."""
+    def _randomize_text(self, text: str, has_entities: bool = False) -> str:
+        """Insert 1-3 invisible chars to create byte-unique messages.
+
+        When entities are present, appends the invisible char(s) at the END
+        of the text so existing entity offsets stay correct.
+        """
         if not text:
             return text
+        invis = random.choice(self._INVISIBLE_CHARS) * random.randint(1, 3)
+        if has_entities:
+            # Safe: append after all text so no offset is disturbed
+            return text + invis
         chars = list(text)
         for _ in range(random.randint(1, 3)):
             pos = random.randint(0, len(chars))
@@ -376,9 +394,59 @@ class MessageEngine:
         return len(self._templates)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  BROADCASTER — Main Orchestrator
-# ══════════════════════════════════════════════════════════════════════════════
+
+# \u2500\u2500 Entity conversion helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+def _entities_to_telethon(entities: list[dict] | None) -> list | None:
+    """Convert serialised Bot-API entity dicts \u2192 Telethon MessageEntity objects.
+
+    Supports: custom_emoji (Telegram Premium), bold, italic, code, pre,
+    text_link, strikethrough, underline, spoiler.
+    Returns None if there are no entities (Telethon then parses markdown normally).
+    """
+    if not entities:
+        return None
+    result = []
+    for e in entities:
+        t   = e.get("type", "")
+        o   = e.get("offset", 0)
+        lng = e.get("length", 1)
+        try:
+            if t == "custom_emoji":
+                result.append(MessageEntityCustomEmoji(
+                    offset=o, length=lng,
+                    document_id=int(e["custom_emoji_id"])
+                ))
+            elif t == "bold":
+                result.append(MessageEntityBold(offset=o, length=lng))
+            elif t == "italic":
+                result.append(MessageEntityItalic(offset=o, length=lng))
+            elif t == "code":
+                result.append(MessageEntityCode(offset=o, length=lng))
+            elif t == "pre":
+                result.append(MessageEntityPre(
+                    offset=o, length=lng,
+                    language=e.get("language") or ""
+                ))
+            elif t == "text_link":
+                result.append(MessageEntityTextUrl(
+                    offset=o, length=lng,
+                    url=e.get("url", "")
+                ))
+            elif t == "strikethrough":
+                result.append(MessageEntityStrike(offset=o, length=lng))
+            elif t == "underline":
+                result.append(MessageEntityUnderline(offset=o, length=lng))
+            elif t == "spoiler":
+                result.append(MessageEntitySpoiler(offset=o, length=lng))
+        except Exception as ex:
+            logger.warning("Skipping entity '%s': %s", t, ex)
+    return result if result else None
+
+
+# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+#  BROADCASTER \u2014 Main Orchestrator
+# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 
 class Broadcaster:
     """Main broadcaster engine.
@@ -518,11 +586,28 @@ class Broadcaster:
     def is_template_enabled(self, idx: int) -> bool:
         return idx not in self._disabled_templates
 
-    def add_template(self, text: str, media: str | None = None):
-        """Add a new message template and save to config."""
-        self.config.messages.append({"text": text, "media": media})
+    def add_template(self, text: str, media: str | None = None,
+                     entities: list[dict] | None = None):
+        """Add a new message template and save to config.
+
+        Args:
+            text:     The message text (may be empty if media-only).
+            media:    Telegram file_id for photo/video/GIF/document.
+            entities: Serialised Bot-API entities (bold, italic, custom_emoji…)
+                      stored as JSON-serialisable dicts so they survive restarts.
+        """
+        self.config.messages.append({
+            "text": text,
+            "media": media,
+            "entities": entities or [],
+        })
         self.config.save()
-        AuditLogger.log("template_add", details=f"Added template: {text[:60]}...")
+        emoji_count = sum(1 for e in (entities or []) if e.get("type") == "custom_emoji")
+        AuditLogger.log(
+            "template_add",
+            details=f"Added template: {text[:60]}... "
+                    f"({'with ' + str(emoji_count) + ' custom emoji(s)' if emoji_count else 'no custom emoji'})"
+        )
 
     def remove_template(self, idx: int):
         """Permanently remove a template by index and save config."""
@@ -779,8 +864,14 @@ class Broadcaster:
                             await progress_callback(f"▶️ Resumed round {round_num}.")
 
                     template = self.config.messages[tmpl_idx]
-                    msg_text = MessageEngine([template])._randomize_text(template.get("text", ""))
+                    raw_text = template.get("text", "")
+                    stored_entities = template.get("entities") or []
+                    has_entities = bool(stored_entities)
+                    msg_text = MessageEngine([template])._randomize_text(
+                        raw_text, has_entities=has_entities
+                    )
                     msg_media = template.get("media")
+                    msg_entities = _entities_to_telethon(stored_entities)
 
                     self.stats["current_index"] = tmpl_num + 1
 
@@ -809,9 +900,15 @@ class Broadcaster:
 
                         try:
                             if msg_media:
-                                await self.client.send_file(chat_id, msg_media, caption=msg_text)
+                                await self.client.send_file(
+                                    chat_id, msg_media, caption=msg_text,
+                                    formatting_entities=msg_entities,
+                                )
                             else:
-                                await self.client.send_message(chat_id, msg_text)
+                                await self.client.send_message(
+                                    chat_id, msg_text,
+                                    formatting_entities=msg_entities,
+                                )
 
                             self.stats["sent"] += 1
                             self._rate_limiter.record_send()
@@ -834,12 +931,18 @@ class Broadcaster:
                                 )
                             if not await self._interruptible_sleep(total_wait):
                                 break
-                            # Retry
+                            # Retry after FloodWait
                             try:
                                 if msg_media:
-                                    await self.client.send_file(chat_id, msg_media, caption=msg_text)
+                                    await self.client.send_file(
+                                        chat_id, msg_media, caption=msg_text,
+                                        formatting_entities=msg_entities,
+                                    )
                                 else:
-                                    await self.client.send_message(chat_id, msg_text)
+                                    await self.client.send_message(
+                                        chat_id, msg_text,
+                                        formatting_entities=msg_entities,
+                                    )
                                 self.stats["sent"] += 1
                                 self._rate_limiter.record_send()
                             except Exception as retry_err:
